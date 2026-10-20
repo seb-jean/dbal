@@ -894,6 +894,38 @@ class PostgreSQLPlatform extends AbstractPlatform
         return 'ST_DWithin(' . $geometry1 . ', ' . $geometry2 . ', ' . $distance . ')';
     }
 
+    public function getSpatialGeodesicDistanceExpression(string $geometry1, string $geometry2): string
+    {
+        return 'ST_Distance(' . $this->getGeographySQL($geometry1) . ', ' . $this->getGeographySQL($geometry2) . ')';
+    }
+
+    public function getSpatialGeodesicWithinDistanceExpression(
+        string $geometry1,
+        string $geometry2,
+        string $distance,
+    ): string {
+        return 'ST_DWithin(' . $this->getGeographySQL($geometry1) . ', ' . $this->getGeographySQL($geometry2)
+            . ', ' . $distance . ')';
+    }
+
+    public function getSpatialGeodesicAreaExpression(string $geometry): string
+    {
+        return 'ST_Area(' . $this->getGeographySQL($geometry) . ')';
+    }
+
+    public function getSpatialGeodesicLengthExpression(string $geometry): string
+    {
+        return 'ST_Length(' . $this->getGeographySQL($geometry) . ')';
+    }
+
+    /**
+     * Casts the geometry to the geography type of PostGIS, whose functions compute on the WGS 84 ellipsoid.
+     */
+    private function getGeographySQL(string $geometry): string
+    {
+        return 'CAST(ST_SetSRID(' . $geometry . ', 4326) AS geography)';
+    }
+
     public function getCreateIndexSQL(Index $index, string $table): string
     {
         if ($index->getType() !== IndexType::SPATIAL) {

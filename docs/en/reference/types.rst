@@ -688,7 +688,10 @@ The platforms generate the SQL of the spatial functions that all of them support
 - ``getSpatialDistanceExpression()``, ``getSpatialAreaExpression()`` and
   ``getSpatialLengthExpression()`` measure geometries;
 - ``getSpatialXExpression()``, ``getSpatialYExpression()`` and ``getSpatialSridExpression()``
-  return the coordinates of a point and the SRID of a geometry.
+  return the coordinates of a point and the SRID of a geometry;
+- ``getSpatialGeodesicDistanceExpression()``, ``getSpatialGeodesicWithinDistanceExpression()``,
+  ``getSpatialGeodesicAreaExpression()`` and ``getSpatialGeodesicLengthExpression()`` measure
+  geometries in meters on the Earth.
 
 Their arguments are SQL expressions, which are used once each. The tests evaluate to booleans
 as represented by the platform, which can be compared with ``AbstractPlatform::convertBooleans(true)``:
@@ -718,6 +721,13 @@ latitude pairs is expressed in degrees. The relationships are evaluated by the d
 geographic spatial reference systems, MySQL 8.0+ and Oracle follow the geodesics between the
 vertices, while the other platforms follow straight lines. The Z and M coordinates are ignored,
 and the geometries must have the same SRID.
+
+The geodesic measures interpret the coordinates as longitudes and latitudes on the WGS 84
+ellipsoid (SRID 4326), whatever the SRID of the geometries, and are expressed in meters (or
+square meters). MySQL 5.7 and MariaDB compute the distance on a sphere (with an error of up to
+0.5%) and only between points, and support neither the geodesic area nor the geodesic length. On SQLite,
+SpatiaLite reads the ellipsoid from its ``spatial_ref_sys`` table, which
+``SELECT InitSpatialMetadata(1)`` creates.
 
 Some platforms evaluate the relationships that are not defined for the dimensions of the
 geometries to ``NULL`` rather than to false, for instance a point crossing a polygon (MySQL 8.0+,
