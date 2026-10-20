@@ -4,10 +4,8 @@ declare(strict_types=1);
 
 namespace Doctrine\DBAL\Tests\Functional\Types;
 
-use Doctrine\DBAL\Exception\DriverException;
 use Doctrine\DBAL\Platforms\AbstractMySQLPlatform;
 use Doctrine\DBAL\Platforms\DB2Platform;
-use Doctrine\DBAL\Platforms\Exception\NotSupported;
 use Doctrine\DBAL\Platforms\MariaDBPlatform;
 use Doctrine\DBAL\Platforms\MySQL80Platform;
 use Doctrine\DBAL\Platforms\OraclePlatform;
@@ -22,7 +20,8 @@ use Doctrine\DBAL\Schema\Table;
 use Doctrine\DBAL\Spatial\Dimension;
 use Doctrine\DBAL\Spatial\Geometry;
 use Doctrine\DBAL\Spatial\GeometryKind;
-use Doctrine\DBAL\Tests\FunctionalTestCase;
+use Doctrine\DBAL\Spatial\SpatialRelation;
+use Doctrine\DBAL\Tests\Functional\SpatialTestCase;
 use Doctrine\DBAL\Types\ConversionException;
 use Doctrine\DBAL\Types\GeometryType;
 use Doctrine\DBAL\Types\Types;
@@ -33,33 +32,11 @@ use function sprintf;
 use function str_contains;
 use function strtolower;
 
-final class GeometryTest extends FunctionalTestCase
+final class GeometryTest extends SpatialTestCase
 {
     protected function setUp(): void
     {
-        $platform = $this->connection->getDatabasePlatform();
-
-        try {
-            $platform->getGeometryTypeDeclarationSQL([]);
-        } catch (NotSupported) {
-            self::markTestSkipped(sprintf('%s does not support spatial types.', $platform::class));
-        }
-
-        if (
-            $platform instanceof PostgreSQLPlatform
-            && $this->connection->fetchOne("SELECT 1 FROM pg_extension WHERE extname = 'postgis'") === false
-        ) {
-            $this->skipOrFail('This test requires the PostGIS extension.');
-        }
-
-        if (
-            $platform instanceof DB2Platform
-            && $this->connection->fetchOne(
-                "SELECT 1 FROM SYSCAT.DATATYPES WHERE TYPESCHEMA = 'SYSIBM' AND TYPENAME = 'ST_GEOMETRY'",
-            ) === false
-        ) {
-            $this->skipOrFail('This test requires Db2 Spatial Analytics.');
-        }
+        parent::setUp();
 
         $this->dropTableIfExists('geometry_test');
     }
@@ -213,20 +190,17 @@ final class GeometryTest extends FunctionalTestCase
 
     public function testParameterAsFunctionArgument(): void
     {
-        $platform  = $this->connection->getDatabasePlatform();
-        $predicate = 'ST_Intersects(geom, ' . $this->connection->convertToDatabaseValueSQL('?', Types::GEOMETRY) . ')';
+        $platform = $this->connection->getDatabasePlatform();
 
         if ($platform instanceof SQLitePlatform) {
             $this->requireSpatiaLite();
-
-            // the predicates of SpatiaLite return 1, 0 or -1 (error)
-            $predicate .= ' = 1';
-        } elseif ($platform instanceof DB2Platform) {
-            // the predicates of Db2 return integers
-            $predicate .= ' = 1';
-        } elseif (! $platform instanceof PostgreSQLPlatform && ! $platform instanceof AbstractMySQLPlatform) {
-            self::markTestSkipped('This test uses the ST_Intersects() function of PostGIS, MySQL and SpatiaLite.');
         }
+
+        $predicate = $platform->getSpatialRelationExpression(
+            SpatialRelation::INTERSECTS,
+            'geom',
+            $this->connection->convertToDatabaseValueSQL('?', Types::GEOMETRY),
+        ) . ' = ' . $platform->convertBooleans(true);
 
         $this->createTable(Column::editor()
             ->setUnquotedName('geom')
@@ -549,27 +523,6 @@ final class GeometryTest extends FunctionalTestCase
                 'SELECT SDO_GEOM.VALIDATE_GEOMETRY_WITH_CONTEXT(geom, 0.005) FROM geometry_test WHERE id = 3',
             ),
         );
-    }
-
-    private function requireSpatiaLite(): void
-    {
-        try {
-            $this->connection->fetchOne('SELECT spatialite_version()');
-        } catch (DriverException) {
-            $this->skipOrFail('This test requires SpatiaLite.');
-        }
-    }
-
-    /**
-     * The CI jobs of the spatial extensions declare them as required, so that the tests cannot be skipped silently.
-     */
-    private function skipOrFail(string $message): never
-    {
-        if (($GLOBALS['spatial'] ?? null) === 'required') {
-            self::fail($message);
-        }
-
-        self::markTestSkipped($message);
     }
 
     /** @param list<Index>|Column $indexesOrColumn */

@@ -856,7 +856,7 @@ class PostgreSQLPlatform extends AbstractPlatform
     }
 
     /**
-     * The value is the hexadecimal EWKB of the geometry, which PostGIS casts implicitly.
+     * The value is the hexadecimal EWKB of the geometry, which is a text input of PostGIS.
      */
     public function convertGeometryToDatabaseValue(Geometry $geometry): string
     {
@@ -878,6 +878,20 @@ class PostgreSQLPlatform extends AbstractPlatform
     public function getGeometryBindingType(): ParameterType
     {
         return ParameterType::STRING;
+    }
+
+    /**
+     * Casts the value, so that PostgreSQL can choose between the geometry and geography variants of the functions it
+     * is passed to.
+     */
+    public function convertGeometryToDatabaseValueSQL(string $sqlExpr): string
+    {
+        return 'CAST(' . $sqlExpr . ' AS geometry)';
+    }
+
+    public function getSpatialWithinDistanceExpression(string $geometry1, string $geometry2, string $distance): string
+    {
+        return 'ST_DWithin(' . $geometry1 . ', ' . $geometry2 . ', ' . $distance . ')';
     }
 
     public function getCreateIndexSQL(Index $index, string $table): string
