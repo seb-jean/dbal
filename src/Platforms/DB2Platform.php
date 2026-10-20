@@ -13,6 +13,7 @@ use Doctrine\DBAL\Schema\ColumnDiff;
 use Doctrine\DBAL\Schema\DB2SchemaManager;
 use Doctrine\DBAL\Schema\Identifier;
 use Doctrine\DBAL\Schema\Index;
+use Doctrine\DBAL\Schema\Index\IndexType;
 use Doctrine\DBAL\Schema\Name\UnquotedIdentifierFolding;
 use Doctrine\DBAL\Schema\TableDiff;
 use Doctrine\DBAL\Spatial\Exception\InvalidGeometry;
@@ -344,6 +345,18 @@ class DB2Platform extends AbstractPlatform
     public function getCurrentTimestampSQL(): string
     {
         return 'CURRENT TIMESTAMP';
+    }
+
+    /**
+     * Db2 Spatial Analytics provides no spatial index, and spatial columns cannot be part of other indexes.
+     */
+    public function getCreateIndexSQL(Index $index, string $table): string
+    {
+        if ($index->getType() === IndexType::SPATIAL) {
+            throw NotSupported::new('spatial index');
+        }
+
+        return parent::getCreateIndexSQL($index, $table);
     }
 
     /** @internal The method should be only used from within the {@see AbstractPlatform} class hierarchy. */

@@ -14,15 +14,18 @@ use Doctrine\DBAL\Platforms\Oracle\SdoGeometry;
 use Doctrine\DBAL\Schema\ForeignKeyConstraint;
 use Doctrine\DBAL\Schema\Identifier;
 use Doctrine\DBAL\Schema\Index;
+use Doctrine\DBAL\Schema\Index\IndexType;
 use Doctrine\DBAL\Schema\Name\UnquotedIdentifierFolding;
 use Doctrine\DBAL\Schema\OracleSchemaManager;
 use Doctrine\DBAL\Schema\Sequence;
 use Doctrine\DBAL\Schema\TableDiff;
+use Doctrine\DBAL\Spatial\Dimension;
 use Doctrine\DBAL\Spatial\Exception\InvalidGeometry;
 use Doctrine\DBAL\Spatial\Geometry;
 use Doctrine\DBAL\Spatial\SpatialRelation;
 use Doctrine\DBAL\TransactionIsolationLevel;
 use Doctrine\DBAL\Types\BinaryType;
+use Doctrine\DBAL\Types\GeometryType;
 use Doctrine\DBAL\Types\Types;
 use Doctrine\Deprecations\Deprecation;
 use InvalidArgumentException;
@@ -32,8 +35,10 @@ use function count;
 use function explode;
 use function implode;
 use function is_string;
+use function preg_match;
 use function sprintf;
 use function str_contains;
+use function str_split;
 use function strlen;
 use function strtoupper;
 use function substr;
@@ -326,10 +331,12 @@ class OraclePlatform extends AbstractPlatform
     /** @internal The method should be only used from within the {@see AbstractSchemaManager} class hierarchy. */
     public function getListSequencesSQL(string $database): string
     {
+        // the sequences of spatial indexes are named MDRS_<number>$
         return 'SELECT SEQUENCE_NAME, MIN_VALUE, INCREMENT_BY FROM SYS.ALL_SEQUENCES WHERE SEQUENCE_OWNER = '
             . $this->quoteStringLiteral(
                 $this->normalizeIdentifier($database)->getName(),
-            );
+            )
+            . " AND SEQUENCE_NAME NOT LIKE 'MDRS\\_%$' ESCAPE '\\'";
     }
 
     /**
@@ -353,6 +360,14 @@ class OraclePlatform extends AbstractPlatform
             ) {
                 $sql = array_merge($sql, $this->getCreateAutoincrementSql($column['name'], $name));
             }
+        }
+
+        foreach ($columns as $column) {
+            if (! $this->getColumnType($column) instanceof GeometryType) {
+                continue;
+            }
+
+            $sql[] = $this->getGeometryMetadataSQL($name, $column);
         }
 
         foreach ($indexes as $index) {
@@ -582,15 +597,23 @@ SQL,
      */
     public function getAlterTableSQL(TableDiff $diff): array
     {
-        $sql          = [];
-        $commentsSQL  = [];
-        $addColumnSQL = [];
+        $sql                 = [];
+        $commentsSQL         = [];
+        $addColumnSQL        = [];
+        $geometryMetadataSQL = [];
 
         $tableNameSQL = $diff->getOldTable()->getQuotedName($this);
 
         foreach ($diff->getAddedColumns() as $column) {
             $addColumnSQL[] = $this->getColumnDeclarationSQL($column->getQuotedName($this), $column->toArray(true));
             $comment        = $column->getComment();
+
+            if ($this->getColumnType($column) instanceof GeometryType) {
+                $geometryMetadataSQL[] = $this->getGeometryMetadataSQL(
+                    $tableNameSQL,
+                    ['name' => $column->getQuotedName($this)] + $column->toArray(true),
+                );
+            }
 
             if ($comment !== '') {
                 $commentsSQL[] = $this->getCommentOnColumnSQL(
@@ -618,6 +641,16 @@ SQL,
                 $sql = array_merge(
                     $sql,
                     $this->getRenameColumnSQL($tableNameSQL, $oldColumnName, $newColumnName),
+                );
+            }
+
+            if (
+                $this->getColumnType($newColumn) instanceof GeometryType
+                && ($columnDiff->hasNameChanged() || $columnDiff->hasTypeChanged())
+            ) {
+                $geometryMetadataSQL[] = $this->getGeometryMetadataSQL(
+                    $tableNameSQL,
+                    ['name' => $newColumn->getQuotedName($this)] + $newColumn->toArray(true),
                 );
             }
 
@@ -680,6 +713,7 @@ SQL,
             $this->getPreAlterTableIndexForeignKeySQL($diff),
             $sql,
             $commentsSQL,
+            $geometryMetadataSQL,
             $this->getPostAlterTableIndexForeignKeySQL($diff),
         );
     }
@@ -878,6 +912,20 @@ SQL,
         return ParameterType::STRING;
     }
 
+    /**
+     * Spatial indexes require the geometry column to be registered in USER_SDO_GEOM_METADATA, which DBAL does when it
+     * creates the column.
+     */
+    public function getCreateIndexSQL(Index $index, string $table): string
+    {
+        if ($index->getType() !== IndexType::SPATIAL) {
+            return parent::getCreateIndexSQL($index, $table);
+        }
+
+        return 'CREATE INDEX ' . $index->getQuotedName($this) . ' ON ' . $table
+            . ' (' . implode(', ', $index->getQuotedColumns($this)) . ') INDEXTYPE IS MDSYS.SPATIAL_INDEX_V2';
+    }
+
     public function getSpatialRelationExpression(
         SpatialRelation $relation,
         string $geometry1,
@@ -990,6 +1038,59 @@ SQL,
             $geometry1,
             $geometry2,
         );
+    }
+
+    /**
+     * Registers a geometry column in USER_SDO_GEOM_METADATA, as spatial indexes require: with the SRID and the
+     * coordinate dimension of the column, and the bounds of the longitudes and latitudes if the SRID is geodetic. The
+     * registration of a former column with the same name is replaced, since dropping a table does not remove it.
+     *
+     * @param array<string, mixed> $column
+     */
+    private function getGeometryMetadataSQL(string $table, array $column): string
+    {
+        [, $dimension, $srid] = $this->getGeometryColumnOptions($column);
+
+        $tolerance = self::SPATIAL_TOLERANCE;
+        $geodetic  = $planar = [];
+
+        foreach (str_split(($dimension ?? Dimension::XY)->value) as $name) {
+            [$min, $max] = match ($name) {
+                'X' => ['-180', '180'],
+                'Y' => ['-90', '90'],
+                default => ['-1E15', '1E15'],
+            };
+
+            $geodetic[] = sprintf("SDO_DIM_ELEMENT('%s', %s, %s, %s)", $name, $min, $max, $tolerance);
+            $planar[]   = sprintf("SDO_DIM_ELEMENT('%s', -1E15, 1E15, %s)", $name, $tolerance);
+        }
+
+        return sprintf(
+            <<<'SQL'
+            BEGIN
+              DELETE FROM USER_SDO_GEOM_METADATA WHERE TABLE_NAME = %1$s AND COLUMN_NAME = %2$s;
+              INSERT INTO USER_SDO_GEOM_METADATA (TABLE_NAME, COLUMN_NAME, DIMINFO, SRID)
+              SELECT %1$s, %2$s, CASE WHEN COUNT(*) > 0 THEN SDO_DIM_ARRAY(%3$s) ELSE SDO_DIM_ARRAY(%4$s) END, %5$s
+              FROM MDSYS.SDO_COORD_REF_SYS WHERE SRID = %5$s AND COORD_REF_SYS_KIND LIKE 'GEOGRAPHIC%%';
+            END;
+            SQL,
+            $this->quoteStringLiteral($this->getGeometryMetadataName($table)),
+            $this->quoteStringLiteral($this->getGeometryMetadataName($column['name'])),
+            implode(', ', $geodetic),
+            implode(', ', $planar),
+            $srid === null || $srid === 0 ? 'NULL' : $srid,
+        );
+    }
+
+    /**
+     * Returns the name of a table or a column as USER_SDO_GEOM_METADATA stores it: between double quotes if it is not
+     * a valid unquoted identifier.
+     */
+    private function getGeometryMetadataName(string $name): string
+    {
+        $name = $this->normalizeIdentifier($name)->getName();
+
+        return preg_match('/^[A-Z][A-Z0-9_$#]*$/', $name) === 1 ? $name : '"' . $name . '"';
     }
 
     /**

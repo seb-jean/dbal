@@ -575,7 +575,25 @@ The same restrictions can be declared as the ``geometryType`` (e.g. ``POINT``),
 ``coordinateDimension`` (``XY``, ``XYZ``, ``XYM`` or ``XYZM``) and ``srid`` platform
 options, for example in the column options of an ORM mapping.
 
-Spatial indexes are declared with ``Doctrine\DBAL\Schema\Index\IndexType::SPATIAL``.
+Spatial indexes are declared with ``Doctrine\DBAL\Schema\Index\IndexType::SPATIAL``. SQL Server
+requires the extent of the indexed geometries, which defaults to the extent of the longitudes and
+latitudes, for instance for Lambert-93 coordinates (SRID 2154):
+
+::
+
+    <?php
+    use Doctrine\DBAL\Schema\Index;
+    use Doctrine\DBAL\Schema\Index\BoundingBox;
+    use Doctrine\DBAL\Schema\Index\IndexType;
+
+    Index::editor()
+        ->setUnquotedName('idx_places_location')
+        ->setUnquotedColumnNames('location')
+        ->setType(IndexType::SPATIAL)
+        ->setBoundingBox(new BoundingBox(-357823.24, 6037008.69, 1313632.36, 7230727.37))
+        ->create();
+
+The comparator does not detect the changes of the bounding box of an existing index.
 
 +----------------+------------------------------------------------------------------------------+
 | Platform       | Support                                                                      |
@@ -595,25 +613,29 @@ Spatial indexes are declared with ``Doctrine\DBAL\Schema\Index\IndexType::SPATIA
 |                | functions require, so that they can be used once SpatiaLite is loaded (see   |
 |                | below). Columns are declared with the name of the kind, which is not         |
 |                | enforced, nor are the dimension and the SRID. Empty geometries cannot be     |
-|                | stored. Spatial indexes are not supported yet.                               |
+|                | stored. Spatial indexes are created as regular indexes, since the spatial    |
+|                | indexes of SpatiaLite are only used by explicit queries.                     |
 +----------------+------------------------------------------------------------------------------+
 | SQL Server     | ``geometry`` columns. The kind, the dimension and the SRID are not enforced. |
 |                | Empty points cannot be stored. Geometries cannot be compared with ``=``.     |
-|                | Spatial indexes are not supported yet.                                       |
+|                | Spatial indexes use the ``GEOMETRY_AUTO_GRID`` tessellation and require a    |
+|                | clustered primary key.                                                       |
 +----------------+------------------------------------------------------------------------------+
-| Oracle         | ``SDO_GEOMETRY`` columns (Oracle Spatial). The kind, the dimension and the   |
-|                | SRID are not enforced. Empty geometries and collections containing           |
-|                | multi-line strings, multi-polygons or collections cannot be stored. The      |
-|                | rings of polygons are oriented as Oracle requires. With ``pdo_oci``, values  |
-|                | are limited to 1332 bytes of JSON, and ``fetchAll*()`` cannot read several   |
-|                | geometries. Spatial indexes are not supported yet.                           |
+| Oracle         | ``SDO_GEOMETRY`` columns (Oracle Spatial), registered with their SRID and    |
+|                | dimension in ``USER_SDO_GEOM_METADATA`` as spatial indexes require. Only     |
+|                | spatial indexes enforce the SRID and the dimension, and the kind is not      |
+|                | enforced. Empty geometries and collections containing multi-line strings,    |
+|                | multi-polygons or collections cannot be stored. The rings of polygons are    |
+|                | oriented as Oracle requires. With ``pdo_oci``, values are limited to 1332    |
+|                | bytes of JSON, and ``fetchAll*()`` cannot read several geometries.           |
 +----------------+------------------------------------------------------------------------------+
 | Db2            | Requires Db2 Spatial Analytics (Db2 11.5.4 or newer), enabled with           |
 |                | ``CALL SYSPROC.SYSINSTALLOBJECTS('GEO', 'C', NULL, NULL)``. The kind is      |
 |                | enforced by the column type. The SRID must be defined in Db2 (0, 4326, 4269  |
 |                | and 27700 are predefined), and the coordinates are rounded to the precision  |
 |                | of its definition. Empty geometries and geometry collections cannot be       |
-|                | stored. Spatial indexes are not supported.                                   |
+|                | stored. Spatial indexes are not supported: declaring one throws an           |
+|                | exception.                                                                   |
 +----------------+------------------------------------------------------------------------------+
 
 SpatiaLite can be loaded into every connection with the

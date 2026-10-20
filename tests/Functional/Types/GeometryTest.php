@@ -6,6 +6,7 @@ namespace Doctrine\DBAL\Tests\Functional\Types;
 
 use Doctrine\DBAL\Platforms\AbstractMySQLPlatform;
 use Doctrine\DBAL\Platforms\DB2Platform;
+use Doctrine\DBAL\Platforms\Exception\NotSupported;
 use Doctrine\DBAL\Platforms\MariaDBPlatform;
 use Doctrine\DBAL\Platforms\MySQL80Platform;
 use Doctrine\DBAL\Platforms\OraclePlatform;
@@ -14,8 +15,11 @@ use Doctrine\DBAL\Platforms\SQLitePlatform;
 use Doctrine\DBAL\Platforms\SQLServerPlatform;
 use Doctrine\DBAL\Schema\Column;
 use Doctrine\DBAL\Schema\Index;
+use Doctrine\DBAL\Schema\Index\BoundingBox;
 use Doctrine\DBAL\Schema\Index\IndexType;
+use Doctrine\DBAL\Schema\Name\OptionallyQualifiedName;
 use Doctrine\DBAL\Schema\PrimaryKeyConstraint;
+use Doctrine\DBAL\Schema\Sequence;
 use Doctrine\DBAL\Schema\Table;
 use Doctrine\DBAL\Spatial\Dimension;
 use Doctrine\DBAL\Spatial\Geometry;
@@ -27,6 +31,8 @@ use Doctrine\DBAL\Types\GeometryType;
 use Doctrine\DBAL\Types\Types;
 use PHPUnit\Framework\Attributes\DataProvider;
 
+use function array_map;
+use function preg_grep;
 use function preg_match;
 use function sprintf;
 use function str_contains;
@@ -283,7 +289,11 @@ final class GeometryTest extends SpatialTestCase
             self::assertSame(GeometryKind::POINT, $column->getGeometryType());
         }
 
-        if ($platform instanceof PostgreSQLPlatform || $platform instanceof MySQL80Platform) {
+        if (
+            $platform instanceof PostgreSQLPlatform
+            || $platform instanceof MySQL80Platform
+            || $platform instanceof OraclePlatform
+        ) {
             self::assertSame(4326, $column->getSrid());
         }
 
@@ -300,11 +310,7 @@ final class GeometryTest extends SpatialTestCase
 
     public function testSpatialIndex(): void
     {
-        $platform = $this->connection->getDatabasePlatform();
-
-        if (! $platform instanceof PostgreSQLPlatform && ! $platform instanceof AbstractMySQLPlatform) {
-            self::markTestSkipped(sprintf('Spatial indexes are not supported on %s yet.', $platform::class));
-        }
+        $this->requireSpatialIndexes();
 
         $table = $this->createTable(
             [
@@ -345,6 +351,100 @@ final class GeometryTest extends SpatialTestCase
         );
 
         self::assertSame(1, (int) $this->connection->fetchOne('SELECT COUNT(*) FROM geometry_test'));
+
+        // the tables and sequences storing the spatial indexes of Oracle are not introspected
+        if (! $this->connection->getDatabasePlatform() instanceof OraclePlatform) {
+            return;
+        }
+
+        $names = [
+            ...array_map(
+                static fn (OptionallyQualifiedName $name): string => $name->toString(),
+                $schemaManager->introspectTableNames(),
+            ),
+            ...array_map(static fn (Sequence $sequence): string => $sequence->getName(), [
+                ...$schemaManager->introspectSequences(),
+                ...$schemaManager->listSequences(),
+            ]),
+            ...$schemaManager->listTableNames(),
+        ];
+
+        self::assertSame([], preg_grep('/^"?MDR[ST]_/i', $names));
+    }
+
+    public function testSpatialIndexBoundingBox(): void
+    {
+        $this->requireSpatialIndexes();
+
+        $this->createTable(
+            [
+                Index::editor()
+                    ->setUnquotedName('geometry_test_location')
+                    ->setUnquotedColumnNames('location')
+                    ->setType(IndexType::SPATIAL)
+                    ->setBoundingBox(new BoundingBox(-1000.5, 0, 1000, 500))
+                    ->create(),
+            ],
+            Column::editor()
+                ->setUnquotedName('location')
+                ->setTypeName(Types::GEOMETRY)
+                ->setGeometryType(GeometryKind::POINT)
+                ->setSrid(3857)
+                ->create(),
+        );
+
+        $schemaManager = $this->connection->createSchemaManager();
+
+        $indexes = [
+            $schemaManager->introspectTableByUnquotedName('geometry_test')->getIndex('geometry_test_location'),
+            $schemaManager->listTableIndexes('geometry_test')['geometry_test_location'],
+        ];
+
+        foreach ($indexes as $index) {
+            self::assertSame(IndexType::SPATIAL, $index->getType());
+
+            // only SQL Server stores the bounding box of spatial indexes
+            if ($this->connection->getDatabasePlatform() instanceof SQLServerPlatform) {
+                self::assertEquals(new BoundingBox(-1000.5, 0, 1000, 500), $index->getBoundingBox());
+            } else {
+                self::assertNull($index->getBoundingBox());
+            }
+        }
+    }
+
+    public function testSpatialIndexOnUnsupportedPlatforms(): void
+    {
+        $platform = $this->connection->getDatabasePlatform();
+
+        if (! $platform instanceof SQLitePlatform && ! $platform instanceof DB2Platform) {
+            self::markTestSkipped('This test covers the platforms that do not support spatial indexes.');
+        }
+
+        $indexes = [
+            Index::editor()
+                ->setUnquotedName('geometry_test_location')
+                ->setUnquotedColumnNames('location')
+                ->setType(IndexType::SPATIAL)
+                ->create(),
+        ];
+
+        $column = Column::editor()
+            ->setUnquotedName('location')
+            ->setTypeName(Types::GEOMETRY)
+            ->create();
+
+        if ($platform instanceof DB2Platform) {
+            $this->expectException(NotSupported::class);
+        }
+
+        $table = $this->createTable($indexes, $column);
+
+        // SQLite creates a regular index: the spatial indexes of SpatiaLite are only used by explicit queries
+        $schemaManager     = $this->connection->createSchemaManager();
+        $introspectedTable = $schemaManager->introspectTableByUnquotedName('geometry_test');
+
+        self::assertSame(IndexType::REGULAR, $introspectedTable->getIndex('geometry_test_location')->getType());
+        self::assertTrue($schemaManager->createComparator()->compareTables($introspectedTable, $table)->isEmpty());
     }
 
     public function testMariaDBIgnoresTheSrid(): void
@@ -523,6 +623,17 @@ final class GeometryTest extends SpatialTestCase
                 'SELECT SDO_GEOM.VALIDATE_GEOMETRY_WITH_CONTEXT(geom, 0.005) FROM geometry_test WHERE id = 3',
             ),
         );
+    }
+
+    private function requireSpatialIndexes(): void
+    {
+        $platform = $this->connection->getDatabasePlatform();
+
+        if (! $platform instanceof SQLitePlatform && ! $platform instanceof DB2Platform) {
+            return;
+        }
+
+        self::markTestSkipped(sprintf('%s does not support spatial indexes.', $platform::class));
     }
 
     /** @param list<Index>|Column $indexesOrColumn */

@@ -16,6 +16,8 @@ use Doctrine\DBAL\Schema\Column;
 use Doctrine\DBAL\Schema\ColumnDiff;
 use Doctrine\DBAL\Schema\Identifier;
 use Doctrine\DBAL\Schema\Index;
+use Doctrine\DBAL\Schema\Index\BoundingBox;
+use Doctrine\DBAL\Schema\Index\IndexType;
 use Doctrine\DBAL\Schema\Name\UnquotedIdentifierFolding;
 use Doctrine\DBAL\Schema\Sequence;
 use Doctrine\DBAL\Schema\SQLServerSchemaManager;
@@ -53,6 +55,7 @@ use function strtoupper;
 use function substr;
 use function substr_count;
 use function ucfirst;
+use function var_export;
 
 use const PREG_OFFSET_CAPTURE;
 
@@ -353,6 +356,10 @@ class SQLServerPlatform extends AbstractPlatform
 
     public function getCreateIndexSQL(Index $index, string $table): string
     {
+        if ($index->getType() === IndexType::SPATIAL) {
+            return $this->getCreateSpatialIndexSQL($index, $table);
+        }
+
         $constraint = parent::getCreateIndexSQL($index, $table);
 
         if ($index->isUnique() && ! $index->isPrimary()) {
@@ -376,6 +383,26 @@ class SQLServerPlatform extends AbstractPlatform
         }
 
         return $type;
+    }
+
+    /**
+     * The bounding box, which geometry columns require, defaults to the extent of the longitudes and latitudes. The
+     * tessellation is specified, since its default depends on the compatibility level of the database.
+     */
+    private function getCreateSpatialIndexSQL(Index $index, string $table): string
+    {
+        $boundingBox = $index->getBoundingBox() ?? new BoundingBox(-180, -90, 180, 90);
+
+        return sprintf(
+            'CREATE SPATIAL INDEX %s ON %s (%s) USING GEOMETRY_AUTO_GRID WITH (BOUNDING_BOX = (%s, %s, %s, %s))',
+            $index->getQuotedName($this),
+            $table,
+            implode(', ', $index->getQuotedColumns($this)),
+            var_export($boundingBox->getMinX(), true),
+            var_export($boundingBox->getMinY(), true),
+            var_export($boundingBox->getMaxX(), true),
+            var_export($boundingBox->getMaxY(), true),
+        );
     }
 
     /**

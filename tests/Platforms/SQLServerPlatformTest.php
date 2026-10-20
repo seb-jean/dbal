@@ -16,6 +16,8 @@ use Doctrine\DBAL\Schema\Comparator;
 use Doctrine\DBAL\Schema\ComparatorConfig;
 use Doctrine\DBAL\Schema\DefaultExpression\CurrentDate;
 use Doctrine\DBAL\Schema\Index;
+use Doctrine\DBAL\Schema\Index\BoundingBox;
+use Doctrine\DBAL\Schema\Index\IndexType;
 use Doctrine\DBAL\Schema\PrimaryKeyConstraint;
 use Doctrine\DBAL\Schema\Sequence;
 use Doctrine\DBAL\Schema\Table;
@@ -31,6 +33,29 @@ class SQLServerPlatformTest extends AbstractPlatformTestCase
     public function createPlatform(): AbstractPlatform
     {
         return new SQLServerPlatform();
+    }
+
+    public function testCreateSpatialIndex(): void
+    {
+        $index = Index::editor()
+            ->setUnquotedName('idx_location')
+            ->setUnquotedColumnNames('location')
+            ->setType(IndexType::SPATIAL);
+
+        self::assertSame(
+            'CREATE SPATIAL INDEX idx_location ON places (location) USING GEOMETRY_AUTO_GRID'
+                . ' WITH (BOUNDING_BOX = (-180.0, -90.0, 180.0, 90.0))',
+            $this->platform->getCreateIndexSQL($index->create(), 'places'),
+        );
+
+        self::assertSame(
+            'CREATE SPATIAL INDEX idx_location ON places (location) USING GEOMETRY_AUTO_GRID'
+                . ' WITH (BOUNDING_BOX = (-0.5, 0.0, 1.0E+20, 500.25))',
+            $this->platform->getCreateIndexSQL(
+                $index->setBoundingBox(new BoundingBox(-0.5, 0, 1e20, 500.25))->create(),
+                'places',
+            ),
+        );
     }
 
     protected function createComparator(): Comparator
