@@ -80,6 +80,7 @@ class PostgreSQLPlatformTest extends AbstractPlatformTestCase
         yield 'unconstrained' => [[], 'geography(Geometry,4326)'];
         yield 'SRID 0' => [['srid' => 0], 'geography(Geometry,4326)'];
         yield 'kind' => [['geometryType' => GeometryKind::POINT], 'geography(Point,4326)'];
+        yield 'kind named as by other libraries' => [['geometry_type' => 'point'], 'geography(Point,4326)'];
         yield 'all' => [
             [
                 'geometryType' => GeometryKind::MULTIPOLYGON,

@@ -578,7 +578,9 @@ dimension and their SRID. Each platform enforces what it supports:
 
 The same restrictions can be declared as the ``geometryType`` (e.g. ``POINT``),
 ``coordinateDimension`` (``XY``, ``XYZ``, ``XYM`` or ``XYZM``) and ``srid`` platform
-options, for example in the column options of an ORM mapping.
+options, for example in the column options of an ORM mapping. ``geometry_type`` is accepted
+as an alias of ``geometryType``, as it is named in the mappings written for other spatial
+libraries.
 
 Spatial indexes are declared with ``Doctrine\DBAL\Schema\Index\IndexType::SPATIAL``. SQL Server
 requires the extent of the indexed geometries, which defaults to the extent of the longitudes and

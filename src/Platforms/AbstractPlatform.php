@@ -532,7 +532,8 @@ abstract class AbstractPlatform
      */
     protected function getGeometryColumnOptions(array $column): array
     {
-        $kind = $column['geometryType'] ?? null;
+        // geometry_type is the name of the option in the mappings written for other spatial libraries
+        $kind = $column['geometryType'] ?? $column['geometry_type'] ?? null;
 
         if ($kind !== null && ! $kind instanceof GeometryKind) {
             $kind = GeometryKind::fromName((string) $kind);
