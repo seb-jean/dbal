@@ -23,6 +23,7 @@ use Doctrine\DBAL\Schema\PrimaryKeyConstraint;
 use Doctrine\DBAL\Schema\Sequence;
 use Doctrine\DBAL\Schema\Table;
 use Doctrine\DBAL\Spatial\Dimension;
+use Doctrine\DBAL\Spatial\Exception\InvalidGeometry;
 use Doctrine\DBAL\Spatial\Geometry;
 use Doctrine\DBAL\Spatial\GeometryKind;
 use Doctrine\DBAL\Spatial\SpatialRelation;
@@ -554,6 +555,97 @@ final class GeometryTest extends SpatialTestCase
             ['id' => 1, 'geom' => Geometry::fromWkt('POINT Z (1 2 3)')],
             ['geom' => Types::GEOMETRY],
         );
+    }
+
+    /** @param non-empty-string $ewkt */
+    #[DataProvider('curveAndSurfaceProvider')]
+    public function testCurvesAndSurfaces(string $ewkt, GeometryKind $kind): void
+    {
+        $platform = $this->connection->getDatabasePlatform();
+        $geometry = Geometry::fromWkt($ewkt);
+
+        // only PostGIS supports the curves and surfaces of ISO 13249-3
+        if (! $platform instanceof PostgreSQLPlatform) {
+            try {
+                $platform->getGeometryTypeDeclarationSQL(['geometryType' => $kind]);
+                self::fail('The declaration of the column must be rejected.');
+            } catch (InvalidGeometry) {
+            }
+
+            if ($platform instanceof SQLitePlatform) {
+                $this->requireSpatiaLite();
+            }
+
+            $this->createTable(Column::editor()
+                ->setUnquotedName('geom')
+                ->setTypeName(Types::GEOMETRY)
+                ->setNotNull(false)
+                ->create());
+
+            $this->expectException(ConversionException::class);
+
+            $this->connection->insert('geometry_test', ['id' => 1, 'geom' => $geometry], ['geom' => Types::GEOMETRY]);
+        }
+
+        $table = $this->createTable(
+            Column::editor()
+                ->setUnquotedName('geom')
+                ->setTypeName(Types::GEOMETRY)
+                ->setNotNull(false)
+                ->create(),
+            Column::editor()
+                ->setUnquotedName('typed')
+                ->setTypeName(Types::GEOMETRY)
+                ->setGeometryType($kind)
+                ->setNotNull(false)
+                ->create(),
+        );
+
+        $this->connection->insert(
+            'geometry_test',
+            ['id' => 1, 'geom' => $geometry, 'typed' => $geometry],
+            ['geom' => Types::GEOMETRY, 'typed' => Types::GEOMETRY],
+        );
+
+        $value = $this->connection->convertToPHPValue($this->fetchGeometry(1), Types::GEOMETRY);
+
+        self::assertInstanceOf(Geometry::class, $value);
+        self::assertTrue($value->equals($geometry), $value->asEwkt());
+
+        $schemaManager     = $this->connection->createSchemaManager();
+        $introspectedTable = $schemaManager->introspectTableByUnquotedName('geometry_test');
+
+        self::assertSame($kind, $introspectedTable->getColumn('typed')->getGeometryType());
+        self::assertTrue($schemaManager->createComparator()->compareTables($introspectedTable, $table)->isEmpty());
+    }
+
+    /** @return iterable<string, array{non-empty-string, GeometryKind}> */
+    public static function curveAndSurfaceProvider(): iterable
+    {
+        yield 'circular string' => ['CIRCULARSTRING(0 0,1 1,2 0)', GeometryKind::CIRCULARSTRING];
+        yield 'compound curve' => [
+            'COMPOUNDCURVE((0 0,1 0),CIRCULARSTRING(1 0,2 1,3 0))',
+            GeometryKind::COMPOUNDCURVE,
+        ];
+
+        yield 'curve polygon' => [
+            'CURVEPOLYGON(CIRCULARSTRING(0 0,4 0,4 4,0 4,0 0),(1 1,3 3,3 1,1 1))',
+            GeometryKind::CURVEPOLYGON,
+        ];
+
+        yield 'multi-curve' => ['MULTICURVE((0 0,5 5),CIRCULARSTRING(4 0,4 4,8 4))', GeometryKind::MULTICURVE];
+        yield 'multi-surface' => [
+            'MULTISURFACE(CURVEPOLYGON(CIRCULARSTRING(0 0,4 0,4 4,0 4,0 0)),((10 10,14 12,11 10,10 10)))',
+            GeometryKind::MULTISURFACE,
+        ];
+
+        yield 'polyhedral surface' => [
+            'POLYHEDRALSURFACE(((0 0,0 1,1 1,0 0)),((0 0,1 1,1 0,0 0)))',
+            GeometryKind::POLYHEDRALSURFACE,
+        ];
+
+        yield 'TIN' => ['TIN(((0 0,0 1,1 1,0 0)),((0 0,1 1,1 0,0 0)))', GeometryKind::TIN];
+        yield 'triangle' => ['TRIANGLE((0 0,0 1,1 1,0 0))', GeometryKind::TRIANGLE];
     }
 
     public function testSpatiaLiteCompatibility(): void

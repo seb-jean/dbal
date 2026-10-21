@@ -512,6 +512,15 @@ abstract class AbstractPlatform
     }
 
     /**
+     * Returns whether the platform supports the curves and surfaces of ISO 13249-3 (SQL/MM), see
+     * {@see GeometryKind::isExtended()}.
+     */
+    protected function supportsExtendedGeometryKinds(): bool
+    {
+        return false;
+    }
+
+    /**
      * Returns the geometry kind, the coordinate dimension and the SRID that a spatial column declaration specifies.
      * {@see GeometryKind::GEOMETRY} is returned as NULL, since it does not constrain the column.
      *
@@ -527,6 +536,10 @@ abstract class AbstractPlatform
 
         if ($kind !== null && ! $kind instanceof GeometryKind) {
             $kind = GeometryKind::fromName((string) $kind);
+        }
+
+        if ($kind !== null && $kind->isExtended() && ! $this->supportsExtendedGeometryKinds()) {
+            throw InvalidGeometry::unsupportedKind(static::class, $kind);
         }
 
         $dimension = $column['coordinateDimension'] ?? null;

@@ -877,6 +877,11 @@ class PostgreSQLPlatform extends AbstractPlatform
         );
     }
 
+    protected function supportsExtendedGeometryKinds(): bool
+    {
+        return true;
+    }
+
     public function convertGeographyToDatabaseValueSQL(string $sqlExpr): string
     {
         return 'CAST(' . $sqlExpr . ' AS geography)';

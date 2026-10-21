@@ -114,6 +114,12 @@ class DB2Platform extends AbstractPlatform
      */
     public function convertGeometryToDatabaseValue(Geometry $geometry): string
     {
+        $extendedKind = $geometry->findExtendedKind();
+
+        if ($extendedKind !== null) {
+            throw InvalidGeometry::unsupportedKind('Db2', $extendedKind);
+        }
+
         if ($geometry->getKind() === GeometryKind::GEOMETRYCOLLECTION) {
             throw InvalidGeometry::unsupportedKind('Db2', $geometry->getKind());
         }

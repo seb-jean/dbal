@@ -536,6 +536,11 @@ geometry
 Maps and converts geometries (points, line strings, polygons and their collections) to
 ``Doctrine\DBAL\Spatial\Geometry`` value objects, or ``null`` if no data is present.
 
+On PostgreSQL, the geometries can also be the curves and surfaces of ISO 13249-3 (SQL/MM):
+circular strings, compound curves, curve polygons, multi-curves, multi-surfaces, polyhedral
+surfaces, TINs and triangles. The other platforms reject them, as well as the columns declared
+with these kinds, and GeoJSON cannot represent them.
+
 A ``Geometry`` is immutable and carries a spatial reference system identifier (SRID),
 ``0`` meaning that it is not specified. It can be created from coordinates, from the
 well-known text (WKT) and binary (WKB) formats, including their extended PostGIS

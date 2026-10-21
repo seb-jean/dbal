@@ -1171,6 +1171,9 @@ class SQLServerPlatform extends AbstractPlatform
      */
     public function getGeometryTypeDeclarationSQL(array $column): string
     {
+        // the options are only validated
+        $this->getGeometryColumnOptions($column);
+
         // lower case, since the type names are case-sensitive in case-sensitive databases
         return 'geometry';
     }
@@ -1182,6 +1185,12 @@ class SQLServerPlatform extends AbstractPlatform
      */
     public function convertGeometryToDatabaseValue(Geometry $geometry): string
     {
+        $extendedKind = $geometry->findExtendedKind();
+
+        if ($extendedKind !== null) {
+            throw InvalidGeometry::unsupportedKind('SQL Server', $extendedKind);
+        }
+
         if (self::containsEmptyPoint($geometry)) {
             throw InvalidGeometry::unsupportedEmptyPoint('SQL Server');
         }

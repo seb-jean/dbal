@@ -850,6 +850,9 @@ SQL,
      */
     public function getGeometryTypeDeclarationSQL(array $column): string
     {
+        // the options are only validated, the SRID and the dimension are registered in USER_SDO_GEOM_METADATA
+        $this->getGeometryColumnOptions($column);
+
         return 'SDO_GEOMETRY';
     }
 
