@@ -441,6 +441,53 @@ final class GeometryTest extends SpatialTestCase
         self::assertSame([], preg_grep('/^"?MDR[ST]_/i', $names));
     }
 
+    /**
+     * The spatial indexes created with another access method or operator class are introspected as spatial indexes,
+     * so that the comparator keeps them.
+     */
+    #[DataProvider('postgreSQLSpatialIndexProvider')]
+    public function testOtherSpatialIndexesOfPostgreSQL(string $method, string $operatorClass): void
+    {
+        if (! $this->connection->getDatabasePlatform() instanceof PostgreSQLPlatform) {
+            self::markTestSkipped('This test covers the indexes of PostGIS.');
+        }
+
+        $table = $this->createTable(
+            [
+                Index::editor()
+                    ->setUnquotedName('geometry_test_location')
+                    ->setUnquotedColumnNames('location')
+                    ->setType(IndexType::SPATIAL)
+                    ->create(),
+            ],
+            Column::editor()
+                ->setUnquotedName('location')
+                ->setTypeName(Types::GEOMETRY)
+                ->create(),
+        );
+
+        $this->connection->executeStatement('DROP INDEX geometry_test_location');
+        $this->connection->executeStatement(sprintf(
+            'CREATE INDEX geometry_test_location ON geometry_test USING %s (location %s)',
+            $method,
+            $operatorClass,
+        ));
+
+        $schemaManager     = $this->connection->createSchemaManager();
+        $introspectedTable = $schemaManager->introspectTableByUnquotedName('geometry_test');
+
+        self::assertSame(IndexType::SPATIAL, $introspectedTable->getIndex('geometry_test_location')->getType());
+        self::assertTrue($schemaManager->createComparator()->compareTables($introspectedTable, $table)->isEmpty());
+    }
+
+    /** @return iterable<string, array{string, string}> */
+    public static function postgreSQLSpatialIndexProvider(): iterable
+    {
+        yield 'n-dimensional GiST' => ['GIST', 'gist_geometry_ops_nd'];
+        yield 'SP-GiST' => ['SPGIST', 'spgist_geometry_ops_2d'];
+        yield 'BRIN' => ['BRIN', 'brin_geometry_inclusion_ops_2d'];
+    }
+
     public function testSpatialIndexBoundingBox(): void
     {
         $this->requireSpatialIndexes();

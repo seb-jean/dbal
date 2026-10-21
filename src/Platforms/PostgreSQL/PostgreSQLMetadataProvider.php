@@ -382,7 +382,10 @@ final readonly class PostgreSQLMetadataProvider implements MetadataProvider
                    i.indisunique,
                    pg_get_expr(indpred, indrelid),
                    attname,
-                   COALESCE(am.amname IN ('gist', 'spgist') AND opct.typname IN ('geometry', 'geography'), FALSE)
+                   COALESCE(
+                       am.amname IN ('gist', 'spgist', 'brin') AND opct.typname IN ('geometry', 'geography'),
+                       FALSE
+                   )
             FROM pg_index i
                      JOIN pg_class AS c ON c.oid = i.indrelid
                      JOIN pg_namespace n ON n.oid = c.relnamespace

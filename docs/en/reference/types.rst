@@ -679,6 +679,10 @@ On MySQL 8.0, the coordinates of geometries with a geographic SRID (e.g. 4326) a
 and latitudes in this order, as in all formats supported by ``Geometry``, even though MySQL's own
 WKT and WKB functions use the opposite axis order for such SRIDs.
 
+On PostgreSQL, the spatial indexes are GiST indexes. The indexes created with SQL with another
+access method (SP-GiST, BRIN) or operator class (e.g. ``gist_geometry_ops_nd``) are introspected
+as spatial indexes, so that the comparator keeps them.
+
 On PostgreSQL, the values of a column whose kind, dimension, SRID or type (``geometry`` or
 ``geography``) changes are converted: the new SRID is assigned without transforming the
 coordinates (like ``UpdateGeometrySRID()``), the Z and M coordinates are added with 0 or removed,

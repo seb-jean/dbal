@@ -460,7 +460,7 @@ SQL;
                    pg_get_expr(indpred, indrelid) AS "where",
                    quote_ident(attname) AS attname,
                    COALESCE(
-                       am.amname IN ('gist', 'spgist') AND opct.typname IN ('geometry', 'geography'),
+                       am.amname IN ('gist', 'spgist', 'brin') AND opct.typname IN ('geometry', 'geography'),
                        FALSE
                    ) AS is_spatial
               FROM pg_index i
