@@ -23,6 +23,7 @@ use Doctrine\DBAL\Schema\TableDiff;
 use Doctrine\DBAL\Spatial\Exception\InvalidGeometry;
 use Doctrine\DBAL\Spatial\Geometry;
 use Doctrine\DBAL\Spatial\GeometryKind;
+use Doctrine\DBAL\Spatial\SpatialRelation;
 use Doctrine\DBAL\SQL\Builder\DefaultSelectSQLBuilder;
 use Doctrine\DBAL\SQL\Builder\SelectSQLBuilder;
 use Doctrine\DBAL\TransactionIsolationLevel;
@@ -481,6 +482,59 @@ class SQLitePlatform extends AbstractPlatform
         }
 
         return SpatiaLiteBlob::decode($value);
+    }
+
+    /**
+     * Requires SpatiaLite, whose functions return -1 instead of NULL when an argument is not a geometry.
+     */
+    public function getSpatialRelationExpression(
+        SpatialRelation $relation,
+        string $geometry1,
+        string $geometry2,
+    ): string {
+        return 'NULLIF(' . parent::getSpatialRelationExpression($relation, $geometry1, $geometry2) . ', -1)';
+    }
+
+    /**
+     * SpatiaLite returns -1 for the NULL geometries.
+     */
+    public function getSpatialIsEmptyExpression(string $geometry): string
+    {
+        return 'NULLIF(' . parent::getSpatialIsEmptyExpression($geometry) . ', -1)';
+    }
+
+    /**
+     * SpatiaLite returns -1 for the NULL geometries.
+     */
+    public function getSpatialIsValidExpression(string $geometry): string
+    {
+        return 'NULLIF(' . parent::getSpatialIsValidExpression($geometry) . ', -1)';
+    }
+
+    /**
+     * GeometryType() of SpatiaLite suffixes the name with the dimension, e.g. POLYGON Z.
+     */
+    public function getSpatialGeometryTypeExpression(string $geometry): string
+    {
+        return 'REPLACE(REPLACE(REPLACE(GeometryType(' . $geometry . "), ' ZM', ''), ' Z', ''), ' M', '')";
+    }
+
+    /**
+     * Requires SpatiaLite, which computes on the ellipsoid when the last argument of its functions is 1.
+     */
+    public function getSpatialGeodesicDistanceExpression(string $geometry1, string $geometry2): string
+    {
+        return 'ST_Distance(SetSRID(' . $geometry1 . ', 4326), SetSRID(' . $geometry2 . ', 4326), 1)';
+    }
+
+    public function getSpatialGeodesicAreaExpression(string $geometry): string
+    {
+        return 'ST_Area(SetSRID(' . $geometry . ', 4326), 1)';
+    }
+
+    public function getSpatialGeodesicLengthExpression(string $geometry): string
+    {
+        return 'ST_Length(SetSRID(' . $geometry . ', 4326), 1)';
     }
 
     /**

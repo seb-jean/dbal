@@ -23,6 +23,8 @@ use Doctrine\DBAL\Schema\TableDiff;
 use Doctrine\DBAL\Spatial\Dimension;
 use Doctrine\DBAL\Spatial\Exception\InvalidGeometry;
 use Doctrine\DBAL\Spatial\Geometry;
+use Doctrine\DBAL\Spatial\SpatialRelation;
+use Doctrine\DBAL\Spatial\SpatialSetOperation;
 use Doctrine\DBAL\TransactionIsolationLevel;
 use Doctrine\DBAL\Types\BinaryType;
 use Doctrine\DBAL\Types\GeographyType;
@@ -928,6 +930,217 @@ SQL,
             . ' (' . implode(', ', $index->getQuotedColumns($this)) . ') INDEXTYPE IS MDSYS.SPATIAL_INDEX_V2';
     }
 
+    public function getSpatialRelationExpression(
+        SpatialRelation $relation,
+        string $geometry1,
+        string $geometry2,
+    ): string {
+        $mask = match ($relation) {
+            SpatialRelation::CONTAINS => 'CONTAINS+COVERS+EQUAL',
+            SpatialRelation::DISJOINT => 'DISJOINT',
+            SpatialRelation::EQUALS => 'EQUAL',
+            SpatialRelation::INTERSECTS => 'ANYINTERACT',
+            SpatialRelation::TOUCHES => 'TOUCH+ON',
+            SpatialRelation::WITHIN => 'INSIDE+COVEREDBY+EQUAL',
+            SpatialRelation::CROSSES,
+            SpatialRelation::OVERLAPS => null,
+        };
+
+        if ($mask === null) {
+            return $this->getSpatialCrossesOrOverlapsExpression(
+                $relation === SpatialRelation::CROSSES,
+                $geometry1,
+                $geometry2,
+            );
+        }
+
+        // RELATE() returns FALSE, or the relationships of the mask that hold (TRUE for ANYINTERACT)
+        return sprintf(
+            "DECODE(SDO_GEOM.RELATE(SDO_CS.MAKE_2D(%s), '%s', SDO_CS.MAKE_2D(%s), %s), 'FALSE', 0, NULL, NULL, 1)",
+            $geometry1,
+            $mask,
+            $geometry2,
+            self::SPATIAL_TOLERANCE,
+        );
+    }
+
+    public function getSpatialDistanceExpression(string $geometry1, string $geometry2): string
+    {
+        return sprintf(
+            'SDO_GEOM.SDO_DISTANCE(%s, %s, %s)',
+            $this->getPlanarGeometrySQL($geometry1),
+            $this->getPlanarGeometrySQL($geometry2),
+            self::SPATIAL_TOLERANCE,
+        );
+    }
+
+    public function getSpatialSetOperationExpression(
+        SpatialSetOperation $operation,
+        string $geometry1,
+        string $geometry2,
+    ): string {
+        $function = match ($operation) {
+            SpatialSetOperation::DIFFERENCE => 'SDO_DIFFERENCE',
+            SpatialSetOperation::INTERSECTION => 'SDO_INTERSECTION',
+            SpatialSetOperation::SYMMETRIC_DIFFERENCE => 'SDO_XOR',
+            SpatialSetOperation::UNION => 'SDO_UNION',
+        };
+
+        return $this->getPlanarOperationSQL(
+            sprintf(
+                'SDO_GEOM.%s(%s, %s, %s)',
+                $function,
+                $this->getPlanarGeometrySQL('a.a0'),
+                $this->getPlanarGeometrySQL('a.a1'),
+                self::SPATIAL_TOLERANCE,
+            ),
+            $geometry1,
+            $geometry2,
+        );
+    }
+
+    /**
+     * The arcs of the buffer are approximated by straight segments, with 32 segments per circle like on PostgreSQL.
+     * SDO_GEOM.SDO_BUFFER() returns NULL in the databases without Java.
+     */
+    public function getSpatialBufferExpression(string $geometry, string $distance): string
+    {
+        // the distance is the column a.a1, which can be referenced twice
+        return $this->getPlanarOperationSQL(
+            sprintf(
+                "SDO_GEOM.SDO_ARC_DENSIFY(SDO_GEOM.SDO_BUFFER(%s, a.a1, %2\$s), %2\$s, 'arc_tolerance='"
+                    . " || TO_CHAR(GREATEST(a.a1 * 0.0048, 0.00000001), 'TM', 'NLS_NUMERIC_CHARACTERS = ''.,'''))",
+                $this->getPlanarGeometrySQL('a.a0'),
+                self::SPATIAL_TOLERANCE,
+            ),
+            $geometry,
+            $distance,
+        );
+    }
+
+    public function getSpatialCentroidExpression(string $geometry): string
+    {
+        return $this->getPlanarOperationSQL(
+            sprintf('SDO_GEOM.SDO_CENTROID(%s, %s)', $this->getPlanarGeometrySQL('a.a0'), self::SPATIAL_TOLERANCE),
+            $geometry,
+        );
+    }
+
+    public function getSpatialConvexHullExpression(string $geometry): string
+    {
+        return $this->getPlanarOperationSQL(
+            sprintf('SDO_GEOM.SDO_CONVEXHULL(%s, %s)', $this->getPlanarGeometrySQL('a.a0'), self::SPATIAL_TOLERANCE),
+            $geometry,
+        );
+    }
+
+    public function getSpatialEnvelopeExpression(string $geometry): string
+    {
+        return $this->getPlanarOperationSQL(
+            'SDO_GEOM.SDO_MBR(' . $this->getPlanarGeometrySQL('a.a0') . ')',
+            $geometry,
+        );
+    }
+
+    public function getSpatialAreaExpression(string $geometry): string
+    {
+        return sprintf(
+            'SDO_GEOM.SDO_AREA(%s, %s)',
+            $this->getPlanarGeometrySQL($geometry),
+            self::SPATIAL_TOLERANCE,
+        );
+    }
+
+    public function getSpatialLengthExpression(string $geometry): string
+    {
+        return sprintf(
+            'SDO_GEOM.SDO_LENGTH(%s, %s)',
+            $this->getPlanarGeometrySQL($geometry),
+            self::SPATIAL_TOLERANCE,
+        );
+    }
+
+    public function getSpatialXExpression(string $point): string
+    {
+        return '(SELECT v.X FROM TABLE(SDO_UTIL.GETVERTICES(' . $point . ')) v WHERE v.ID = 1)';
+    }
+
+    public function getSpatialYExpression(string $point): string
+    {
+        return '(SELECT v.Y FROM TABLE(SDO_UTIL.GETVERTICES(' . $point . ')) v WHERE v.ID = 1)';
+    }
+
+    public function getSpatialGeometryTypeExpression(string $geometry): string
+    {
+        // the last two digits of SDO_GTYPE are the kind, the scalar subquery references the geometry once
+        return "(SELECT DECODE(MOD(s.g.SDO_GTYPE, 100), 1, 'POINT', 2, 'LINESTRING', 3, 'POLYGON',"
+            . " 4, 'GEOMETRYCOLLECTION', 5, 'MULTIPOINT', 6, 'MULTILINESTRING', 7, 'MULTIPOLYGON')"
+            . ' FROM (SELECT ' . $geometry . ' g FROM DUAL) s)';
+    }
+
+    /**
+     * Oracle represents empty geometries as NULL.
+     */
+    public function getSpatialIsEmptyExpression(string $geometry): string
+    {
+        return 'NVL2(' . $geometry . ', 0, NULL)';
+    }
+
+    public function getSpatialIsValidExpression(string $geometry): string
+    {
+        // the function returns TRUE or the reason why the geometry is invalid, the scalar subquery references the
+        // geometry once
+        return sprintf(
+            "(SELECT CASE WHEN s.g IS NULL THEN NULL WHEN SDO_GEOM.VALIDATE_GEOMETRY_WITH_CONTEXT(%s, %s) = 'TRUE'"
+                . ' THEN 1 ELSE 0 END FROM (SELECT %s g FROM DUAL) s)',
+            $this->getPlanarGeometrySQL('s.g'),
+            self::SPATIAL_TOLERANCE,
+            $geometry,
+        );
+    }
+
+    public function getSpatialSridExpression(string $geometry): string
+    {
+        // the SRID 0 is stored as NULL, the scalar subquery references the geometry once
+        return '(SELECT CASE WHEN s.g IS NULL THEN NULL ELSE NVL(s.g.SDO_SRID, 0) END'
+            . ' FROM (SELECT ' . $geometry . ' g FROM DUAL) s)';
+    }
+
+    /**
+     * Oracle reports both crossing and overlapping geometries as overlapping: they are told apart by the dimensions of
+     * the geometries and, for two line strings, of their intersection.
+     */
+    private function getSpatialCrossesOrOverlapsExpression(bool $crosses, string $geometry1, string $geometry2): string
+    {
+        $dimension = static fn (string $geometry): string => sprintf(
+            'CASE WHEN SDO_GEOM.SDO_AREA(%1$s, %2$s) > 0 THEN 2'
+                . ' WHEN SDO_GEOM.SDO_LENGTH(%1$s, %2$s) > 0 THEN 1 ELSE 0 END',
+            $geometry,
+            self::SPATIAL_TOLERANCE,
+        );
+
+        // the scalar subquery references the geometries once
+        return sprintf(
+            '(SELECT CASE WHEN r.v IS NULL THEN NULL'
+                . " WHEN r.v NOT IN ('OVERLAPBDYDISJOINT', 'OVERLAPBDYINTERSECT') THEN 0"
+                . ' WHEN %1$s <> %2$s THEN %3$d'
+                . ' WHEN %1$s <> 1 THEN %4$d'
+                . ' WHEN SDO_GEOM.SDO_LENGTH(SDO_GEOM.SDO_INTERSECTION(r.a, r.b, %5$s), %5$s) > 0 THEN %4$d'
+                . ' ELSE %3$d END'
+                . ' FROM (SELECT g.a, g.b, SDO_GEOM.RELATE(g.a, \'DETERMINE\', g.b, %5$s) v'
+                . ' FROM (SELECT SDO_CS.MAKE_2D(%6$s) a, SDO_CS.MAKE_2D(%7$s) b FROM DUAL) g) r)',
+            $dimension('r.a'),
+            $dimension('r.b'),
+            // geometries of different dimensions, or line strings intersecting at points, cross each other
+            $crosses ? 1 : 0,
+            // other geometries of the same dimension overlap each other
+            $crosses ? 0 : 1,
+            self::SPATIAL_TOLERANCE,
+            $geometry1,
+            $geometry2,
+        );
+    }
+
     /**
      * Registers a geometry column in USER_SDO_GEOM_METADATA, as spatial indexes require: with the SRID and the
      * coordinate dimension of the column, and the bounds of the longitudes and latitudes if the SRID is geodetic. The
@@ -991,6 +1204,87 @@ SQL,
         $name = $this->normalizeIdentifier($name)->getName();
 
         return preg_match('/^[A-Z][A-Z0-9_$#]*$/', $name) === 1 ? $name : '"' . $name . '"';
+    }
+
+    public function getSpatialGeodesicDistanceExpression(string $geometry1, string $geometry2): string
+    {
+        return sprintf(
+            'SDO_GEOM.SDO_DISTANCE(%s, %s, %s)',
+            $this->getGeodeticGeometrySQL($geometry1),
+            $this->getGeodeticGeometrySQL($geometry2),
+            self::SPATIAL_TOLERANCE,
+        );
+    }
+
+    public function getSpatialGeodesicAreaExpression(string $geometry): string
+    {
+        return sprintf(
+            'SDO_GEOM.SDO_AREA(%s, %s)',
+            $this->getGeodeticGeometrySQL($geometry),
+            self::SPATIAL_TOLERANCE,
+        );
+    }
+
+    public function getSpatialGeodesicLengthExpression(string $geometry): string
+    {
+        return sprintf(
+            'SDO_GEOM.SDO_LENGTH(%s, %s)',
+            $this->getGeodeticGeometrySQL($geometry),
+            self::SPATIAL_TOLERANCE,
+        );
+    }
+
+    /**
+     * Applies an operation to its arguments, the first of which is a geometry, and assigns the SRID of this geometry
+     * to the result. The operation is not applied to NULL arguments, which some operations consider as empty
+     * geometries. The scalar subquery references each argument once.
+     *
+     * @param string $operation SQL of the operation applied to the columns a.a0, a.a1… of the inline view.
+     */
+    private function getPlanarOperationSQL(string $operation, string ...$arguments): string
+    {
+        $conditions = $selections = [];
+
+        foreach ($arguments as $i => $argument) {
+            $conditions[] = 'a.a' . $i . ' IS NULL';
+            $selections[] = $argument . ' a' . $i;
+        }
+
+        return '(SELECT CASE WHEN r.g IS NULL THEN NULL'
+            . ' ELSE SDO_GEOMETRY(r.g.SDO_GTYPE, r.s, r.g.SDO_POINT, r.g.SDO_ELEM_INFO, r.g.SDO_ORDINATES) END'
+            . ' FROM (SELECT CASE WHEN ' . implode(' OR ', $conditions) . ' THEN NULL'
+            . ' ELSE ' . $operation . ' END g, a.a0.SDO_SRID s'
+            . ' FROM (SELECT ' . implode(', ', $selections) . ' FROM DUAL) a) r)';
+    }
+
+    /**
+     * Removes the Z and M coordinates and the SRID of the geometry, so that Oracle computes in the plane of the
+     * coordinates rather than on the ellipsoid of a geodetic coordinate system.
+     */
+    private function getPlanarGeometrySQL(string $geometry): string
+    {
+        return $this->getTwoDimensionalGeometrySQL($geometry, 'NULL');
+    }
+
+    /**
+     * Removes the Z and M coordinates of the geometry and assigns it the SRID 4326, so that Oracle computes on the
+     * WGS 84 ellipsoid.
+     */
+    private function getGeodeticGeometrySQL(string $geometry): string
+    {
+        return $this->getTwoDimensionalGeometrySQL($geometry, '4326');
+    }
+
+    /**
+     * Removes the Z and M coordinates of the geometry and assigns it the given SRID. The scalar subquery references
+     * the geometry once.
+     */
+    private function getTwoDimensionalGeometrySQL(string $geometry, string $srid): string
+    {
+        return '(SELECT CASE WHEN p.g IS NULL THEN NULL'
+            . ' ELSE SDO_GEOMETRY(p.g.SDO_GTYPE, ' . $srid . ','
+            . ' p.g.SDO_POINT, p.g.SDO_ELEM_INFO, p.g.SDO_ORDINATES) END'
+            . ' FROM (SELECT SDO_CS.MAKE_2D(' . $geometry . ') g FROM DUAL) p)';
     }
 
     protected function initializeDoctrineTypeMappings(): void

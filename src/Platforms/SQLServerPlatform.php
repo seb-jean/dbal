@@ -25,6 +25,8 @@ use Doctrine\DBAL\Schema\TableDiff;
 use Doctrine\DBAL\Spatial\Exception\InvalidGeometry;
 use Doctrine\DBAL\Spatial\Geometry;
 use Doctrine\DBAL\Spatial\GeometryKind;
+use Doctrine\DBAL\Spatial\SpatialRelation;
+use Doctrine\DBAL\Spatial\SpatialSetOperation;
 use Doctrine\DBAL\SQL\Builder\SelectSQLBuilder;
 use Doctrine\DBAL\TransactionIsolationLevel;
 use Doctrine\DBAL\Types\Types;
@@ -49,9 +51,11 @@ use function str_contains;
 use function str_ends_with;
 use function str_replace;
 use function str_starts_with;
+use function strtolower;
 use function strtoupper;
 use function substr;
 use function substr_count;
+use function ucfirst;
 use function var_export;
 
 use const PREG_OFFSET_CAPTURE;
@@ -1250,6 +1254,125 @@ class SQLServerPlatform extends AbstractPlatform
         }
 
         return SpatialSerialization::decode($value, true);
+    }
+
+    public function getSpatialRelationExpression(
+        SpatialRelation $relation,
+        string $geometry1,
+        string $geometry2,
+    ): string {
+        return '(' . $geometry1 . ').ST' . ucfirst(strtolower($relation->value)) . '(' . $geometry2 . ')';
+    }
+
+    public function getSpatialDistanceExpression(string $geometry1, string $geometry2): string
+    {
+        return '(' . $geometry1 . ').STDistance(' . $geometry2 . ')';
+    }
+
+    public function getSpatialSetOperationExpression(
+        SpatialSetOperation $operation,
+        string $geometry1,
+        string $geometry2,
+    ): string {
+        return '(' . $geometry1 . ').' . match ($operation) {
+            SpatialSetOperation::DIFFERENCE => 'STDifference',
+            SpatialSetOperation::INTERSECTION => 'STIntersection',
+            SpatialSetOperation::SYMMETRIC_DIFFERENCE => 'STSymDifference',
+            SpatialSetOperation::UNION => 'STUnion',
+        } . '(' . $geometry2 . ')';
+    }
+
+    public function getSpatialBufferExpression(string $geometry, string $distance): string
+    {
+        return '(' . $geometry . ').STBuffer(' . $distance . ')';
+    }
+
+    public function getSpatialCentroidExpression(string $geometry): string
+    {
+        return '(' . $geometry . ').STCentroid()';
+    }
+
+    public function getSpatialConvexHullExpression(string $geometry): string
+    {
+        return '(' . $geometry . ').STConvexHull()';
+    }
+
+    public function getSpatialEnvelopeExpression(string $geometry): string
+    {
+        return '(' . $geometry . ').STEnvelope()';
+    }
+
+    public function getSpatialAreaExpression(string $geometry): string
+    {
+        return '(' . $geometry . ').STArea()';
+    }
+
+    public function getSpatialLengthExpression(string $geometry): string
+    {
+        return '(' . $geometry . ').STLength()';
+    }
+
+    public function getSpatialXExpression(string $point): string
+    {
+        return '(' . $point . ').STX';
+    }
+
+    public function getSpatialYExpression(string $point): string
+    {
+        return '(' . $point . ').STY';
+    }
+
+    public function getSpatialSridExpression(string $geometry): string
+    {
+        return '(' . $geometry . ').STSrid';
+    }
+
+    /**
+     * The kind is read from the WKB of the geometry, since STGeometryType() fails for invalid geometries.
+     */
+    public function getSpatialGeometryTypeExpression(string $geometry): string
+    {
+        return 'CASE CAST(SUBSTRING((' . $geometry . ").STAsBinary(), 2, 1) AS int) WHEN 1 THEN 'POINT'"
+            . " WHEN 2 THEN 'LINESTRING' WHEN 3 THEN 'POLYGON' WHEN 4 THEN 'MULTIPOINT' WHEN 5 THEN 'MULTILINESTRING'"
+            . " WHEN 6 THEN 'MULTIPOLYGON' WHEN 7 THEN 'GEOMETRYCOLLECTION' END";
+    }
+
+    public function getSpatialIsEmptyExpression(string $geometry): string
+    {
+        return '(' . $geometry . ').STIsEmpty()';
+    }
+
+    public function getSpatialIsValidExpression(string $geometry): string
+    {
+        return '(' . $geometry . ').STIsValid()';
+    }
+
+    public function getSpatialGeodesicDistanceExpression(string $geometry1, string $geometry2): string
+    {
+        return $this->getGeographySQL($geometry1) . '.STDistance(' . $this->getGeographySQL($geometry2) . ')';
+    }
+
+    public function getSpatialGeodesicAreaExpression(string $geometry): string
+    {
+        return $this->getGeographySQL($geometry) . '.STArea()';
+    }
+
+    public function getSpatialGeodesicLengthExpression(string $geometry): string
+    {
+        return $this->getGeographySQL($geometry) . '.STLength()';
+    }
+
+    /**
+     * Converts the geometry to a geography with the SRID 4326, whose methods compute on the WGS 84 ellipsoid. The
+     * geography type considers the polygons whose exterior ring is oriented clockwise as the rest of the globe, so the
+     * orientation of the geographies larger than a hemisphere is reversed. The scalar subquery references the geometry
+     * once.
+     */
+    private function getGeographySQL(string $geometry): string
+    {
+        return '(SELECT CASE WHEN w.geog.EnvelopeAngle() > 90 THEN w.geog.ReorientObject() ELSE w.geog END'
+            . ' FROM (SELECT geography::STGeomFromWKB(v.geom.STAsBinary(), 4326) AS geog'
+            . ' FROM (SELECT ' . $geometry . ' AS geom) AS v) AS w)';
     }
 
     private static function containsEmptyPoint(Geometry $geometry): bool

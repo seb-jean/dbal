@@ -167,6 +167,49 @@ class DB2Platform extends AbstractPlatform
         return Geometry::fromWkt($wkt, (int) $srid);
     }
 
+    /**
+     * ST_GeometryType() returns the qualified name of the structured type, e.g. SYSIBM.ST_POLYGON or
+     * "DB2GSE  "."ST_POLYGON". The scalar fullselect references the geometry once.
+     */
+    public function getSpatialGeometryTypeExpression(string $geometry): string
+    {
+        return "(SELECT REPLACE(RTRIM(SUBSTR(t, LOCATE('ST_', t) + 3), '\"'), 'GEOMCOLLECTION', 'GEOMETRYCOLLECTION')"
+            . ' FROM TABLE(VALUES VARCHAR(ST_GeometryType(' . $geometry . '))) AS v(t))';
+    }
+
+    /**
+     * ST_Centroid() returns the center of the bounding box of the geometry.
+     */
+    public function getSpatialCentroidExpression(string $geometry): string
+    {
+        throw NotSupported::new(__METHOD__);
+    }
+
+    public function getSpatialGeodesicDistanceExpression(string $geometry1, string $geometry2): string
+    {
+        return 'ST_Distance(' . $this->getGeographicGeometrySQL($geometry1) . ', '
+            . $this->getGeographicGeometrySQL($geometry2) . ", 'METRE')";
+    }
+
+    public function getSpatialGeodesicAreaExpression(string $geometry): string
+    {
+        return 'ST_Area(' . $this->getGeographicGeometrySQL($geometry) . ", 'METRE')";
+    }
+
+    public function getSpatialGeodesicLengthExpression(string $geometry): string
+    {
+        return 'ST_Length(' . $this->getGeographicGeometrySQL($geometry) . ", 'METRE')";
+    }
+
+    /**
+     * Assigns the SRID 4326 to the geometry, so that Db2 computes on the WGS 84 ellipsoid when a linear unit is
+     * passed.
+     */
+    private function getGeographicGeometrySQL(string $geometry): string
+    {
+        return 'ST_GeomFromWKB(ST_AsBinary(' . $geometry . '), 4326)';
+    }
+
     private static function containsEmptyMember(Geometry $geometry): bool
     {
         if ($geometry->getKind()->getMemberKind() === null) {

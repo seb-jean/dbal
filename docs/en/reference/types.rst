@@ -663,8 +663,8 @@ be located in the directory configured by the ``sqlite3.extension_dir`` php.ini 
 The metadata tables, virtual tables and spatial index tables of SpatiaLite are excluded from the
 schema introspection.
 
-The coordinates are stored and retrieved without loss of precision, except on Db2. Oracle and
-Db2 cannot bind or fetch their spatial objects: the type converts the values with SQL functions,
+The coordinates are stored and retrieved without loss of precision, except on Db2. On
+PostgreSQL, SQL Server, Oracle and Db2, the type converts the values with SQL expressions,
 which ``Connection::insert()``, ``Connection::update()``, ``Connection::delete()``, the query builder
 and the ORM apply automatically. In hand-written SQL, use ``Connection::convertToDatabaseValueSQL()``
 and ``Connection::convertToPHPValueSQL()``:
@@ -675,9 +675,10 @@ and ``Connection::convertToPHPValueSQL()``:
     $sql = 'SELECT ' . $connection->convertToPHPValueSQL('location', Types::GEOMETRY)
         . ' FROM places WHERE id = ?';
 
-    $location = $connection->convertToPHPValue($connection->fetchOne($sql, [$id]), Types::GEOMETRY); On MySQL 8.0, the
-coordinates of geometries with a geographic SRID (e.g. 4326) are longitudes and latitudes
-in this order, as in all formats supported by ``Geometry``, even though MySQL's own
+    $location = $connection->convertToPHPValue($connection->fetchOne($sql, [$id]), Types::GEOMETRY);
+
+On MySQL 8.0, the coordinates of geometries with a geographic SRID (e.g. 4326) are longitudes
+and latitudes in this order, as in all formats supported by ``Geometry``, even though MySQL's own
 WKT and WKB functions use the opposite axis order for such SRIDs.
 
 On PostgreSQL, the spatial indexes are GiST indexes. The indexes created with SQL with another
@@ -699,13 +700,144 @@ without SRID are given the SRID 4326 (WGS 84). The columns accept the same optio
 columns of the ``geometry`` type.
 
 PostgreSQL and SQL Server declare ``geography`` columns, whose functions compute on the ellipsoid.
-The other platforms declare the same columns as for the ``geometry`` type, whose SRID defaults to
-4326 on the platforms that constrain it, so that these columns are introspected as ``geometry``
-columns.
+On PostgreSQL, their spatial indexes are used by the geodesic functions (see below). The other
+platforms declare the same columns as for the ``geometry`` type, whose SRID defaults to 4326 on
+the platforms that constrain it, so that these columns are introspected as ``geometry`` columns.
 
 On SQL Server, the orientation of the polygons that would be larger than a hemisphere is
 reversed, since its ``geography`` type considers the polygons whose exterior ring is oriented
 clockwise as the rest of the globe.
+
+Spatial functions
+^^^^^^^^^^^^^^^^^
+
+The platforms generate the SQL of the spatial functions that all of them support:
+
+- ``getSpatialRelationExpression()`` tests whether two geometries are in one of the spatial
+  relationships of the OGC Simple Features specification, listed by
+  ``Doctrine\DBAL\Spatial\SpatialRelation``: ``CONTAINS``, ``CROSSES``, ``DISJOINT``, ``EQUALS``,
+  ``INTERSECTS``, ``OVERLAPS``, ``TOUCHES`` and ``WITHIN``;
+- ``getSpatialWithinDistanceExpression()`` tests whether two geometries are within a distance of
+  each other;
+- ``getSpatialDistanceExpression()``, ``getSpatialAreaExpression()`` and
+  ``getSpatialLengthExpression()`` measure geometries;
+- ``getSpatialXExpression()``, ``getSpatialYExpression()`` and ``getSpatialSridExpression()``
+  return the coordinates of a point and the SRID of a geometry;
+- ``getSpatialGeometryTypeExpression()`` returns the kind of a geometry, as the value of a
+  ``Doctrine\DBAL\Spatial\GeometryKind`` case (e.g. ``POLYGON``), and
+  ``getSpatialIsEmptyExpression()`` and ``getSpatialIsValidExpression()`` test whether a geometry is
+  empty and valid;
+- ``getSpatialSetOperationExpression()`` returns the result of one of the set-theoretic operations
+  of the OGC Simple Features specification, listed by ``Doctrine\DBAL\Spatial\SpatialSetOperation``:
+  ``DIFFERENCE``, ``INTERSECTION``, ``SYMMETRIC_DIFFERENCE`` and ``UNION``;
+- ``getSpatialBufferExpression()``, ``getSpatialCentroidExpression()``,
+  ``getSpatialConvexHullExpression()`` and ``getSpatialEnvelopeExpression()`` return the buffer,
+  the centroid, the convex hull and the bounding box of a geometry;
+- ``getSpatialGeodesicDistanceExpression()``, ``getSpatialGeodesicWithinDistanceExpression()``,
+  ``getSpatialGeodesicAreaExpression()`` and ``getSpatialGeodesicLengthExpression()`` measure
+  geometries in meters on the Earth.
+
+Their arguments are SQL expressions, which are used once each. The tests evaluate to booleans
+as represented by the platform, which can be compared with ``AbstractPlatform::convertBooleans(true)``:
+
+::
+
+    <?php
+    use Doctrine\DBAL\Spatial\SpatialRelation;
+
+    $platform = $connection->getDatabasePlatform();
+
+    $sql = sprintf(
+        'SELECT name FROM places WHERE %s = %s',
+        $platform->getSpatialRelationExpression(
+            SpatialRelation::WITHIN,
+            'location',
+            $connection->convertToDatabaseValueSQL('?', Types::GEOMETRY),
+        ),
+        $platform->convertBooleans(true),
+    );
+
+    $names = $connection->fetchFirstColumn($sql, [$zone], [Types::GEOMETRY]);
+
+The functions other than the geodesic ones apply to geometries. The measures are computed in the
+plane of the coordinates and are expressed in their unit, whatever the spatial reference system:
+for instance, the distance between two longitude and latitude pairs is expressed in degrees. The
+relationships are evaluated by the database: for geographic spatial reference systems, MySQL 8.0+
+and Oracle follow the geodesics between the vertices, while the other platforms follow straight
+lines. The Z and M coordinates are ignored, and the geometries must have the same SRID.
+
+The functions returning geometries also compute in the plane of the coordinates, and return the
+SRID of their first argument, except on MariaDB, which returns the results of the set-theoretic
+operations, of the buffer and of the convex hull with the SRID 0. An empty result is ``NULL`` on
+Oracle and SQLite. The arcs of the buffers are approximated by straight segments. On Oracle,
+``SDO_GEOM.SDO_BUFFER()`` returns ``NULL`` in the databases without Java. Db2 does not support the
+centroid, since its ``ST_Centroid()`` returns the center of the bounding box, and cannot compute
+buffers in the spatial reference system 0, whose coordinates are non-negative integers. MySQL 8.0
+requires version 8.0.14 or later for these functions. The geometries they return are selected
+like the columns:
+
+::
+
+    <?php
+    use Doctrine\DBAL\Spatial\SpatialSetOperation;
+
+    $sql = sprintf(
+        'SELECT %s FROM parcels WHERE id = ?',
+        $connection->convertToPHPValueSQL(
+            $platform->getSpatialSetOperationExpression(
+                SpatialSetOperation::INTERSECTION,
+                'area',
+                $connection->convertToDatabaseValueSQL('?', Types::GEOMETRY),
+            ),
+            Types::GEOMETRY,
+        ),
+    );
+
+    $intersection = $connection->convertToPHPValue(
+        $connection->fetchOne($sql, [$zone, $id], [Types::GEOMETRY, Types::INTEGER]),
+        Types::GEOMETRY,
+    );
+
+Ordering rows by their distance to a geometry, with a limit, finds its nearest neighbours.
+PostgreSQL and SQL Server use the spatial index if the query also filters out the ``NULL``
+distances, which SQL Server requires; the other platforms compute the distance of every row:
+
+::
+
+    <?php
+    $distance = $platform->getSpatialDistanceExpression(
+        'location',
+        $connection->convertToDatabaseValueSQL('?', Types::GEOMETRY),
+    );
+
+    $sql = $platform->modifyLimitQuery(
+        'SELECT name FROM places WHERE ' . $distance . ' IS NOT NULL ORDER BY ' . $distance,
+        5,
+    );
+
+    $names = $connection->fetchFirstColumn($sql, [$here, $here], [Types::GEOMETRY, Types::GEOMETRY]);
+
+The geodesic measures apply to geometries and geographies, interpret the coordinates as longitudes
+and latitudes on the WGS 84 ellipsoid (SRID 4326), and are expressed in meters (or square
+meters). PostgreSQL uses the ellipsoid of the other geographic spatial reference systems, and
+raises an error for the geometries in a projected spatial reference system, which the other
+platforms interpret as longitudes and latitudes on the WGS 84 ellipsoid. On PostgreSQL, the tests
+of the geodesic distance use the spatial index of a ``geography`` column. MySQL 5.7 and MariaDB compute
+the distance on a sphere (with an error of up to 0.5%) and only between points, and support
+neither the geodesic area nor the geodesic length. On SQLite, SpatiaLite reads the ellipsoid from
+its ``spatial_ref_sys`` table, which ``SELECT InitSpatialMetadata(1)`` creates.
+
+Oracle does not have empty geometries, Db2 does not store invalid geometries, and MariaDB does not
+support the test of validity.
+
+The aggregates (union, extent), the 3D functions, the bounding box operators and the other
+functions of PostGIS that the other platforms lack are left to platform-specific libraries, which
+can register them as custom DQL functions.
+
+Some platforms evaluate the relationships that are not defined for the dimensions of the
+geometries to ``NULL`` rather than to false, for instance a point crossing a polygon (MySQL 8.0+,
+MariaDB and Db2). MariaDB does not follow the specification for some geometries that touch each
+other: for instance, a polygon contains the points of its boundary.
 
 .. _mappingMatrix:
 
