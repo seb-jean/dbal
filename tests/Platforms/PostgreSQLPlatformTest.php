@@ -37,6 +37,36 @@ class PostgreSQLPlatformTest extends AbstractPlatformTestCase
         return new PostgreSQLPlatform();
     }
 
+    public function testAlterSpatialColumnConvertsTheValues(): void
+    {
+        $column = Column::editor()
+            ->setUnquotedName('geom')
+            ->setTypeName(Types::GEOMETRY)
+            ->setGeometryType(GeometryKind::POINT)
+            ->create();
+
+        $table = Table::editor()
+            ->setUnquotedName('places')
+            ->setColumns($column)
+            ->create();
+
+        $diff = new TableDiff($table, changedColumns: [
+            'geom' => new ColumnDiff($column, $column->edit()
+                ->setTypeName(Types::GEOGRAPHY)
+                ->setGeometryType(GeometryKind::MULTIPOINT)
+                ->setCoordinateDimension(Dimension::XYZ)
+                ->create()),
+        ]);
+
+        self::assertSame(
+            [
+                'ALTER TABLE places ALTER geom TYPE geography(MultiPointZ,4326)'
+                    . ' USING CAST(ST_SetSRID(ST_Multi(ST_Force3DZ(geom)), 4326) AS geography)',
+            ],
+            $this->platform->getAlterTableSQL($diff),
+        );
+    }
+
     /** @param array<string, mixed> $column */
     #[DataProvider('geographyColumnProvider')]
     public function testGeographyTypeDeclarationSQL(array $column, string $expected): void

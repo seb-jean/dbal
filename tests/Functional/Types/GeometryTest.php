@@ -14,6 +14,7 @@ use Doctrine\DBAL\Platforms\PostgreSQLPlatform;
 use Doctrine\DBAL\Platforms\SQLitePlatform;
 use Doctrine\DBAL\Platforms\SQLServerPlatform;
 use Doctrine\DBAL\Schema\Column;
+use Doctrine\DBAL\Schema\ColumnEditor;
 use Doctrine\DBAL\Schema\Index;
 use Doctrine\DBAL\Schema\Index\BoundingBox;
 use Doctrine\DBAL\Schema\Index\IndexType;
@@ -244,6 +245,53 @@ final class GeometryTest extends SpatialTestCase
             'SRID=4326;LINESTRING(1 2,3 4)',
             $this->connection->convertToPHPValue($value, Types::GEOMETRY)?->asEwkt(),
         );
+    }
+
+    /**
+     * PostGIS rejects a new SRID, dimension or kind for the values of a populated column without conversion.
+     */
+    public function testChangeOfPopulatedColumnOnPostgreSQL(): void
+    {
+        if (! $this->connection->getDatabasePlatform() instanceof PostgreSQLPlatform) {
+            self::markTestSkipped('This test covers the conversion of PostGIS values.');
+        }
+
+        $table = $this->createTable(Column::editor()
+            ->setUnquotedName('geom')
+            ->setTypeName(Types::GEOMETRY)
+            ->setGeometryType(GeometryKind::POINT)
+            ->create());
+
+        $this->connection->insert(
+            'geometry_test',
+            ['id' => 1, 'geom' => Geometry::point(1, 2)],
+            ['geom' => Types::GEOMETRY],
+        );
+
+        $schemaManager = $this->connection->createSchemaManager();
+
+        $expected = Geometry::fromWkt('SRID=4326;MULTIPOINT Z((1 2 0))')->asEwkt();
+
+        // the geography changes the kind and the dimension too, then the geometry changes the type only
+        foreach ([Types::GEOGRAPHY, Types::GEOMETRY] as $typeName) {
+            $newTable = $table->edit()
+                ->modifyColumnByUnquotedName('geom', static function (ColumnEditor $editor) use ($typeName): void {
+                    $editor->setTypeName($typeName)
+                        ->setGeometryType(GeometryKind::MULTIPOINT)
+                        ->setCoordinateDimension(Dimension::XYZ)
+                        ->setSrid(4326);
+                })
+                ->create();
+
+            $schemaManager->alterTable($schemaManager->createComparator()->compareTables($table, $newTable));
+            $table = $newTable;
+
+            self::assertSame(
+                $expected,
+                $this->connection->convertToPHPValue($this->fetchGeometry(1), Types::GEOMETRY)?->asEwkt(),
+                $typeName,
+            );
+        }
     }
 
     public function testSchema(): void
