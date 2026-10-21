@@ -78,6 +78,25 @@ class OraclePlatformTest extends AbstractPlatformTestCase
         self::assertStringContainsString("SDO_DIM_ELEMENT('Y', -1E15, 1E15, 0.000000001)) END, NULL", $sql[2]);
     }
 
+    public function testCreateTableRegistersGeographyColumnsWithTheSridOfWgs84(): void
+    {
+        $table = Table::editor()
+            ->setUnquotedName('places')
+            ->setColumns(
+                Column::editor()
+                    ->setUnquotedName('location')
+                    ->setTypeName(Types::GEOGRAPHY)
+                    ->create(),
+            )
+            ->create();
+
+        $sql = $this->platform->getCreateTableSQL($table);
+
+        self::assertCount(2, $sql);
+        self::assertSame('CREATE TABLE places (location SDO_GEOMETRY NOT NULL)', $sql[0]);
+        self::assertStringContainsString("SDO_DIM_ELEMENT('Y', -1E15, 1E15, 0.000000001)) END, 4326", $sql[1]);
+    }
+
     public function getGenerateTableSql(): string
     {
         return 'CREATE TABLE test (id NUMBER(10) NOT NULL, test VARCHAR2(255) DEFAULT NULL NULL, PRIMARY KEY (id))';

@@ -11,6 +11,7 @@ use Doctrine\DBAL\Platforms\Keywords\KeywordList;
 use Doctrine\DBAL\Platforms\Keywords\OracleKeywords;
 use Doctrine\DBAL\Platforms\Oracle\OracleMetadataProvider;
 use Doctrine\DBAL\Platforms\Oracle\SdoGeometry;
+use Doctrine\DBAL\Schema\Column;
 use Doctrine\DBAL\Schema\ForeignKeyConstraint;
 use Doctrine\DBAL\Schema\Identifier;
 use Doctrine\DBAL\Schema\Index;
@@ -25,6 +26,7 @@ use Doctrine\DBAL\Spatial\Geometry;
 use Doctrine\DBAL\Spatial\SpatialRelation;
 use Doctrine\DBAL\TransactionIsolationLevel;
 use Doctrine\DBAL\Types\BinaryType;
+use Doctrine\DBAL\Types\GeographyType;
 use Doctrine\DBAL\Types\GeometryType;
 use Doctrine\DBAL\Types\Types;
 use Doctrine\Deprecations\Deprecation;
@@ -363,7 +365,7 @@ class OraclePlatform extends AbstractPlatform
         }
 
         foreach ($columns as $column) {
-            if (! $this->getColumnType($column) instanceof GeometryType) {
+            if (! $this->isSpatialColumn($column)) {
                 continue;
             }
 
@@ -608,7 +610,7 @@ SQL,
             $addColumnSQL[] = $this->getColumnDeclarationSQL($column->getQuotedName($this), $column->toArray(true));
             $comment        = $column->getComment();
 
-            if ($this->getColumnType($column) instanceof GeometryType) {
+            if ($this->isSpatialColumn($column)) {
                 $geometryMetadataSQL[] = $this->getGeometryMetadataSQL(
                     $tableNameSQL,
                     ['name' => $column->getQuotedName($this)] + $column->toArray(true),
@@ -645,7 +647,7 @@ SQL,
             }
 
             if (
-                $this->getColumnType($newColumn) instanceof GeometryType
+                $this->isSpatialColumn($newColumn)
                 && ($columnDiff->hasNameChanged() || $columnDiff->hasTypeChanged())
             ) {
                 $geometryMetadataSQL[] = $this->getGeometryMetadataSQL(
@@ -1049,6 +1051,10 @@ SQL,
      */
     private function getGeometryMetadataSQL(string $table, array $column): string
     {
+        if ($this->getColumnType($column) instanceof GeographyType) {
+            $column = self::getGeographicColumn($column);
+        }
+
         [, $dimension, $srid] = $this->getGeometryColumnOptions($column);
 
         $tolerance = self::SPATIAL_TOLERANCE;
@@ -1080,6 +1086,14 @@ SQL,
             implode(', ', $planar),
             $srid === null || $srid === 0 ? 'NULL' : $srid,
         );
+    }
+
+    /** @param array<string, mixed>|Column $column */
+    private function isSpatialColumn(array|Column $column): bool
+    {
+        $type = $this->getColumnType($column);
+
+        return $type instanceof GeometryType || $type instanceof GeographyType;
     }
 
     /**

@@ -423,6 +423,94 @@ abstract class AbstractPlatform
     }
 
     /**
+     * Returns the SQL snippet to declare a column of the {@see Types\Types::GEOGRAPHY} type.
+     *
+     * The platforms without a geography type declare a geometry column, whose SRID defaults to 4326.
+     *
+     * @param array<string, mixed> $column
+     *
+     * @throws Exception
+     */
+    public function getGeographyTypeDeclarationSQL(array $column): string
+    {
+        return $this->getGeometryTypeDeclarationSQL(self::getGeographicColumn($column));
+    }
+
+    /**
+     * Converts a geography to the value to bind to a column of the {@see Types\Types::GEOGRAPHY} type.
+     *
+     * @internal The method should be only used from within the {@see Types\GeographyType} class.
+     *
+     * @throws Exception
+     * @throws InvalidGeometry
+     */
+    public function convertGeographyToDatabaseValue(Geometry $geography): mixed
+    {
+        return $this->convertGeometryToDatabaseValue($geography);
+    }
+
+    /**
+     * Converts the value of a column of the {@see Types\Types::GEOGRAPHY} type, as selected with
+     * {@see convertGeographyToPHPValueSQL()}, to a geography.
+     *
+     * @internal The method should be only used from within the {@see Types\GeographyType} class.
+     *
+     * @throws Exception
+     * @throws InvalidGeometry
+     */
+    public function convertGeographyToPHPValue(mixed $value): Geometry
+    {
+        return $this->convertGeometryToPHPValue($value);
+    }
+
+    /**
+     * Modifies the SQL expression of a value bound to a column of the {@see Types\Types::GEOGRAPHY} type.
+     *
+     * @internal The method should be only used from within the {@see Types\GeographyType} class.
+     */
+    public function convertGeographyToDatabaseValueSQL(string $sqlExpr): string
+    {
+        return $this->convertGeometryToDatabaseValueSQL($sqlExpr);
+    }
+
+    /**
+     * Modifies the SQL expression selecting a column of the {@see Types\Types::GEOGRAPHY} type.
+     *
+     * @internal The method should be only used from within the {@see Types\GeographyType} class.
+     */
+    public function convertGeographyToPHPValueSQL(string $sqlExpr): string
+    {
+        return $this->convertGeometryToPHPValueSQL($sqlExpr);
+    }
+
+    /**
+     * Returns the binding type of the values bound to a column of the {@see Types\Types::GEOGRAPHY} type.
+     *
+     * @internal The method should be only used from within the {@see Types\GeographyType} class.
+     */
+    public function getGeographyBindingType(): ParameterType
+    {
+        return $this->getGeometryBindingType();
+    }
+
+    /**
+     * Returns the declaration of a geography column with the SRID 4326 if it does not specify one, since geographies
+     * are located on the Earth.
+     *
+     * @param array<string, mixed> $column
+     *
+     * @return array<string, mixed>
+     */
+    protected static function getGeographicColumn(array $column): array
+    {
+        if ((int) ($column['srid'] ?? 0) === 0) {
+            $column['srid'] = 4326;
+        }
+
+        return $column;
+    }
+
+    /**
      * Returns the geometry kind, the coordinate dimension and the SRID that a spatial column declaration specifies.
      * {@see GeometryKind::GEOMETRY} is returned as NULL, since it does not constrain the column.
      *
@@ -1043,13 +1131,14 @@ abstract class AbstractPlatform
     }
 
     /**
-     * Returns the SQL snippet to get the geodesic distance between two geometries, in meters.
+     * Returns the SQL snippet to get the geodesic distance between two geometries or geographies, in meters.
      *
-     * The coordinates are interpreted as longitudes and latitudes on the WGS 84 ellipsoid (SRID 4326), whatever the
-     * SRID of the geometries. MySQL 5.7 and MariaDB compute on a sphere, and only between points.
+     * The coordinates are interpreted as longitudes and latitudes on the WGS 84 ellipsoid (SRID 4326). PostgreSQL
+     * uses the ellipsoid of the other geographic spatial reference systems, and raises an error for the projected
+     * ones. MySQL 5.7 and MariaDB compute on a sphere, and only between points.
      *
-     * @param string $geometry1 SQL expression producing the first geometry.
-     * @param string $geometry2 SQL expression producing the second geometry.
+     * @param string $geometry1 SQL expression producing the first geometry or geography.
+     * @param string $geometry2 SQL expression producing the second geometry or geography.
      *
      * @throws Exception
      */
@@ -1059,14 +1148,14 @@ abstract class AbstractPlatform
     }
 
     /**
-     * Returns the SQL snippet that tests whether the geodesic distance between two geometries, as computed by
-     * {@see getSpatialGeodesicDistanceExpression()}, is less than or equal to the given distance in meters.
+     * Returns the SQL snippet that tests whether the geodesic distance between two geometries or geographies, as
+     * computed by {@see getSpatialGeodesicDistanceExpression()}, is less than or equal to the given distance in meters.
      *
      * The snippet evaluates to a boolean as represented by the platform (see {@see convertBooleans()}), or to NULL if
-     * an argument is NULL.
+     * an argument is NULL. On PostgreSQL, it uses the spatial index of a geography column.
      *
-     * @param string $geometry1 SQL expression producing the first geometry.
-     * @param string $geometry2 SQL expression producing the second geometry.
+     * @param string $geometry1 SQL expression producing the first geometry or geography.
+     * @param string $geometry2 SQL expression producing the second geometry or geography.
      * @param string $distance  SQL expression producing the distance in meters.
      *
      * @throws Exception
@@ -1085,10 +1174,10 @@ abstract class AbstractPlatform
     /**
      * Returns the SQL snippet to get the geodesic area of a polygon or a multi-polygon, in square meters.
      *
-     * The coordinates are interpreted as longitudes and latitudes on the WGS 84 ellipsoid (SRID 4326), whatever the
-     * SRID of the geometry. MySQL 5.7 and MariaDB do not support it.
+     * The coordinates are interpreted as longitudes and latitudes on the WGS 84 ellipsoid (SRID 4326), like by
+     * {@see getSpatialGeodesicDistanceExpression()}. MySQL 5.7 and MariaDB do not support it.
      *
-     * @param string $geometry SQL expression producing the geometry.
+     * @param string $geometry SQL expression producing the geometry or the geography.
      *
      * @throws Exception
      */
@@ -1100,10 +1189,10 @@ abstract class AbstractPlatform
     /**
      * Returns the SQL snippet to get the geodesic length of a line string or a multi-line string, in meters.
      *
-     * The coordinates are interpreted as longitudes and latitudes on the WGS 84 ellipsoid (SRID 4326), whatever the
-     * SRID of the geometry. MySQL 5.7 and MariaDB do not support it.
+     * The coordinates are interpreted as longitudes and latitudes on the WGS 84 ellipsoid (SRID 4326), like by
+     * {@see getSpatialGeodesicDistanceExpression()}. MySQL 5.7 and MariaDB do not support it.
      *
-     * @param string $geometry SQL expression producing the geometry.
+     * @param string $geometry SQL expression producing the geometry or the geography.
      *
      * @throws Exception
      */

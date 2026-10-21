@@ -674,6 +674,23 @@ On MySQL 8.0, the coordinates of geometries with a geographic SRID (e.g. 4326) a
 and latitudes in this order, as in all formats supported by ``Geometry``, even though MySQL's own
 WKT and WKB functions use the opposite axis order for such SRIDs.
 
+geography
+^^^^^^^^^
+
+Maps and converts geographies, i.e. geometries whose coordinates are longitudes and latitudes, to
+``Doctrine\DBAL\Spatial\Geometry`` value objects, or ``null`` if no data is present. The values
+without SRID are given the SRID 4326 (WGS 84). The columns accept the same options as the
+columns of the ``geometry`` type.
+
+PostgreSQL and SQL Server declare ``geography`` columns, whose functions compute on the ellipsoid.
+On PostgreSQL, their spatial indexes are used by the geodesic functions (see below). The other
+platforms declare the same columns as for the ``geometry`` type, whose SRID defaults to 4326 on
+the platforms that constrain it, so that these columns are introspected as ``geometry`` columns.
+
+On SQL Server, the orientation of the polygons that would be larger than a hemisphere is
+reversed, since its ``geography`` type considers the polygons whose exterior ring is oriented
+clockwise as the rest of the globe.
+
 Spatial functions
 ^^^^^^^^^^^^^^^^^
 
@@ -715,19 +732,23 @@ as represented by the platform, which can be compared with ``AbstractPlatform::c
 
     $names = $connection->fetchFirstColumn($sql, [$zone], [Types::GEOMETRY]);
 
-The measures are computed in the plane of the coordinates and are expressed in their unit,
+The other functions apply to geometries. The measures are computed in the plane of the
+coordinates and are expressed in their unit,
 whatever the spatial reference system: for instance, the distance between two longitude and
 latitude pairs is expressed in degrees. The relationships are evaluated by the database: for
 geographic spatial reference systems, MySQL 8.0+ and Oracle follow the geodesics between the
 vertices, while the other platforms follow straight lines. The Z and M coordinates are ignored,
 and the geometries must have the same SRID.
 
-The geodesic measures interpret the coordinates as longitudes and latitudes on the WGS 84
-ellipsoid (SRID 4326), whatever the SRID of the geometries, and are expressed in meters (or
-square meters). MySQL 5.7 and MariaDB compute the distance on a sphere (with an error of up to
-0.5%) and only between points, and support neither the geodesic area nor the geodesic length. On SQLite,
-SpatiaLite reads the ellipsoid from its ``spatial_ref_sys`` table, which
-``SELECT InitSpatialMetadata(1)`` creates.
+The geodesic measures apply to geometries and geographies, interpret the coordinates as longitudes
+and latitudes on the WGS 84 ellipsoid (SRID 4326), and are expressed in meters (or square
+meters). PostgreSQL uses the ellipsoid of the other geographic spatial reference systems, and
+raises an error for the geometries in a projected spatial reference system, which the other
+platforms interpret as longitudes and latitudes on the WGS 84 ellipsoid. On PostgreSQL, the tests
+of the geodesic distance use the spatial index of a ``geography`` column. MySQL 5.7 and MariaDB compute
+the distance on a sphere (with an error of up to 0.5%) and only between points, and support
+neither the geodesic area nor the geodesic length. On SQLite, SpatiaLite reads the ellipsoid from
+its ``spatial_ref_sys`` table, which ``SELECT InitSpatialMetadata(1)`` creates.
 
 Some platforms evaluate the relationships that are not defined for the dimensions of the
 geometries to ``NULL`` rather than to false, for instance a point crossing a polygon (MySQL 8.0+,

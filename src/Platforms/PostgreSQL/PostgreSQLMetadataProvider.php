@@ -278,7 +278,7 @@ final readonly class PostgreSQLMetadataProvider implements MetadataProvider
 
         if ($typeName === 'bpchar') {
             $editor->setFixed(true);
-        } elseif ($typeName === 'geometry') {
+        } elseif ($typeName === 'geometry' || $typeName === 'geography') {
             [$geometryType, $dimension, $srid] = GeometryTypeModifier::parse((int) $typeModifier);
 
             $editor->setGeometryType($geometryType)

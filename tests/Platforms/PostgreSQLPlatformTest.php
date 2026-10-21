@@ -15,6 +15,8 @@ use Doctrine\DBAL\Schema\Sequence;
 use Doctrine\DBAL\Schema\Table;
 use Doctrine\DBAL\Schema\TableDiff;
 use Doctrine\DBAL\Schema\UniqueConstraint;
+use Doctrine\DBAL\Spatial\Dimension;
+use Doctrine\DBAL\Spatial\GeometryKind;
 use Doctrine\DBAL\TransactionIsolationLevel;
 use Doctrine\DBAL\Types\Type;
 use Doctrine\DBAL\Types\Types;
@@ -33,6 +35,29 @@ class PostgreSQLPlatformTest extends AbstractPlatformTestCase
     public function createPlatform(): AbstractPlatform
     {
         return new PostgreSQLPlatform();
+    }
+
+    /** @param array<string, mixed> $column */
+    #[DataProvider('geographyColumnProvider')]
+    public function testGeographyTypeDeclarationSQL(array $column, string $expected): void
+    {
+        self::assertSame($expected, $this->platform->getGeographyTypeDeclarationSQL($column));
+    }
+
+    /** @return iterable<string, array{array<string, mixed>, string}> */
+    public static function geographyColumnProvider(): iterable
+    {
+        yield 'unconstrained' => [[], 'geography(Geometry,4326)'];
+        yield 'SRID 0' => [['srid' => 0], 'geography(Geometry,4326)'];
+        yield 'kind' => [['geometryType' => GeometryKind::POINT], 'geography(Point,4326)'];
+        yield 'all' => [
+            [
+                'geometryType' => GeometryKind::MULTIPOLYGON,
+                'coordinateDimension' => Dimension::XYZ,
+                'srid' => 4269,
+            ],
+            'geography(MultiPolygonZ,4269)',
+        ];
     }
 
     public function getGenerateTableSql(): string

@@ -748,6 +748,7 @@ class PostgreSQLPlatform extends AbstractPlatform
             'float'            => Types::FLOAT,
             'float4'           => Types::SMALLFLOAT,
             'float8'           => Types::FLOAT,
+            'geography'        => Types::GEOGRAPHY,
             'geometry'         => Types::GEOMETRY,
             'inet'             => Types::STRING,
             'int'              => Types::INTEGER,
@@ -856,6 +857,25 @@ class PostgreSQLPlatform extends AbstractPlatform
     }
 
     /**
+     * {@inheritDoc}
+     *
+     * Requires the PostGIS extension. The kind, the dimension and the SRID, which defaults to 4326, are enforced by
+     * the type modifier, e.g. geography(PointZ,4326).
+     */
+    public function getGeographyTypeDeclarationSQL(array $column): string
+    {
+        return GeometryTypeModifier::render(
+            'geography',
+            ...$this->getGeometryColumnOptions(self::getGeographicColumn($column)),
+        );
+    }
+
+    public function convertGeographyToDatabaseValueSQL(string $sqlExpr): string
+    {
+        return 'CAST(' . $sqlExpr . ' AS geography)';
+    }
+
+    /**
      * The value is the hexadecimal EWKB of the geometry, which is a text input of PostGIS.
      */
     public function convertGeometryToDatabaseValue(Geometry $geometry): string
@@ -919,11 +939,12 @@ class PostgreSQLPlatform extends AbstractPlatform
     }
 
     /**
-     * Casts the geometry to the geography type of PostGIS, whose functions compute on the WGS 84 ellipsoid.
+     * Casts the value to the geography type of PostGIS, whose functions compute on the ellipsoid: a geometry without
+     * SRID is located on the WGS 84 ellipsoid, and the cast of a geography is ignored, so that its index can be used.
      */
     private function getGeographySQL(string $geometry): string
     {
-        return 'CAST(ST_SetSRID(' . $geometry . ', 4326) AS geography)';
+        return 'CAST(' . $geometry . ' AS geography)';
     }
 
     public function getCreateIndexSQL(Index $index, string $table): string

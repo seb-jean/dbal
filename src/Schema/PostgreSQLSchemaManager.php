@@ -295,7 +295,7 @@ SQL,
 
         if ($type === Types::JSON) {
             $column->setPlatformOption('jsonb', $jsonb);
-        } elseif ($dbType === 'geometry') {
+        } elseif ($dbType === 'geometry' || $dbType === 'geography') {
             [$geometryType, $dimension, $srid] = GeometryTypeModifier::parse((int) $tableColumn['type_modifier']);
 
             if ($geometryType !== null) {
