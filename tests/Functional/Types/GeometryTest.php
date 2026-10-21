@@ -226,6 +226,26 @@ final class GeometryTest extends SpatialTestCase
         self::assertEquals([1], $ids);
     }
 
+    /**
+     * The conversions of the value and of its selection reference the parameter once.
+     */
+    public function testSelectedParameter(): void
+    {
+        $value = $this->connection->fetchOne(
+            $this->connection->getDatabasePlatform()->getDummySelectSQL($this->connection->convertToPHPValueSQL(
+                $this->connection->convertToDatabaseValueSQL('?', Types::GEOMETRY),
+                Types::GEOMETRY,
+            )),
+            [Geometry::fromWkt('SRID=4326;LINESTRING(1 2,3 4)')],
+            [Types::GEOMETRY],
+        );
+
+        self::assertSame(
+            'SRID=4326;LINESTRING(1 2,3 4)',
+            $this->connection->convertToPHPValue($value, Types::GEOMETRY)?->asEwkt(),
+        );
+    }
+
     public function testSchema(): void
     {
         $platform = $this->connection->getDatabasePlatform();

@@ -878,23 +878,21 @@ SQL,
     }
 
     /**
-     * Selects the components of the SDO_GEOMETRY object as a JSON object: SDO_GEOMETRY objects cannot be fetched.
+     * Selects the components of the SDO_GEOMETRY object as a JSON object: SDO_GEOMETRY objects cannot be fetched. The
+     * scalar subquery references the expression once, which may contain parameters.
      */
     public function convertGeometryToPHPValueSQL(string $sqlExpr): string
     {
-        $expression = '(' . $sqlExpr . ')';
-        $point      = '(' . $expression . '.SDO_POINT)';
-
-        return 'CASE WHEN ' . $sqlExpr . ' IS NULL THEN NULL ELSE JSON_OBJECT('
-            . "'t' VALUE " . $expression . '.SDO_GTYPE, '
-            . "'s' VALUE " . $expression . '.SDO_SRID, '
-            . "'p' VALUE CASE WHEN " . $point . ' IS NULL THEN NULL'
-            . ' ELSE JSON_ARRAY(' . $point . '.X, ' . $point . '.Y, ' . $point . '.Z NULL ON NULL) END FORMAT JSON, '
+        return '(SELECT CASE WHEN s.g IS NULL THEN NULL ELSE JSON_OBJECT('
+            . "'t' VALUE s.g.SDO_GTYPE, "
+            . "'s' VALUE s.g.SDO_SRID, "
+            . "'p' VALUE CASE WHEN s.g.SDO_POINT IS NULL THEN NULL"
+            . ' ELSE JSON_ARRAY(s.g.SDO_POINT.X, s.g.SDO_POINT.Y, s.g.SDO_POINT.Z NULL ON NULL) END FORMAT JSON, '
             . "'e' VALUE (SELECT JSON_ARRAYAGG(c ORDER BY r NULL ON NULL RETURNING CLOB)"
-            . ' FROM (SELECT COLUMN_VALUE c, ROWNUM r FROM TABLE(' . $expression . '.SDO_ELEM_INFO))) FORMAT JSON, '
+            . ' FROM (SELECT COLUMN_VALUE c, ROWNUM r FROM TABLE(s.g.SDO_ELEM_INFO))) FORMAT JSON, '
             . "'o' VALUE (SELECT JSON_ARRAYAGG(c ORDER BY r NULL ON NULL RETURNING CLOB)"
-            . ' FROM (SELECT COLUMN_VALUE c, ROWNUM r FROM TABLE(' . $expression . '.SDO_ORDINATES))) FORMAT JSON'
-            . ' NULL ON NULL RETURNING CLOB) END';
+            . ' FROM (SELECT COLUMN_VALUE c, ROWNUM r FROM TABLE(s.g.SDO_ORDINATES))) FORMAT JSON'
+            . ' NULL ON NULL RETURNING CLOB) END FROM (SELECT ' . $sqlExpr . ' g FROM DUAL) s)';
     }
 
     public function convertGeometryToPHPValue(mixed $value): Geometry
