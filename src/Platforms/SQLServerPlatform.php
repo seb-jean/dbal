@@ -34,6 +34,7 @@ use function implode;
 use function is_array;
 use function is_bool;
 use function is_numeric;
+use function mb_strlen;
 use function preg_match;
 use function preg_match_all;
 use function sprintf;
@@ -901,6 +902,32 @@ class SQLServerPlatform extends AbstractPlatform
     public function getLengthExpression(string $string): string
     {
         return 'LEN(' . $string . ')';
+    }
+
+    /**
+     * The letters replaced with one letter are replaced by TRANSLATE(). The string is converted to a Unicode string
+     * with a binary collation, so that the letters are compared by their code points, and the result has the default
+     * collation of the database.
+     */
+    public function getUnaccentExpression(string $string): string
+    {
+        $string  = 'CAST(' . $string . ' AS NVARCHAR(MAX)) COLLATE Latin1_General_100_BIN2';
+        $letters = $translations = '';
+
+        foreach (UnaccentRules::getReplacements() as $letter => $replacement) {
+            if (mb_strlen($replacement) === 1) {
+                $letters      .= $letter;
+                $translations .= $replacement;
+
+                continue;
+            }
+
+            $string = 'REPLACE(' . $string . ', ' . $this->quoteNationalStringLiteral($letter) . ', '
+                . $this->quoteNationalStringLiteral($replacement) . ')';
+        }
+
+        return 'TRANSLATE(' . $string . ', ' . $this->quoteNationalStringLiteral($letters) . ', '
+            . $this->quoteNationalStringLiteral($translations) . ') COLLATE DATABASE_DEFAULT';
     }
 
     public function getCurrentDatabaseExpression(): string
