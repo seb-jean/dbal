@@ -26,6 +26,7 @@ use Doctrine\DBAL\Types;
 use Doctrine\Deprecations\Deprecation;
 use InvalidArgumentException;
 
+use function array_chunk;
 use function array_combine;
 use function array_fill_keys;
 use function array_keys;
@@ -104,6 +105,29 @@ class SQLitePlatform extends AbstractPlatform
         }
 
         return sprintf('SUBSTR(%s, %s, %s)', $string, $start, $length);
+    }
+
+    /**
+     * The letters are replaced in steps of common table expressions, since the parser of SQLite before 3.45 does not
+     * accept more than about 30 nested function calls.
+     */
+    public function getUnaccentExpression(string $string): string
+    {
+        $steps = [];
+
+        foreach (array_chunk(UnaccentRules::getReplacements(), 10, true) as $step => $replacements) {
+            $expression = $step === 0 ? $string : 's';
+
+            foreach ($replacements as $letter => $replacement) {
+                $expression = 'REPLACE(' . $expression . ', ' . $this->quoteStringLiteral($letter) . ', '
+                    . $this->quoteStringLiteral($replacement) . ')';
+            }
+
+            $steps[] = 'unaccent' . $step . '(s) AS (SELECT ' . $expression
+                . ($step === 0 ? '' : ' FROM unaccent' . ($step - 1)) . ')';
+        }
+
+        return '(WITH ' . implode(', ', $steps) . ' SELECT s FROM unaccent' . (count($steps) - 1) . ')';
     }
 
     public function getLocateExpression(string $string, string $substring, ?string $start = null): string

@@ -102,6 +102,14 @@ class PostgreSQLPlatform extends AbstractPlatform
         return sprintf('POSITION(%s IN %s)', $substring, $string);
     }
 
+    /**
+     * Requires the unaccent extension.
+     */
+    public function getUnaccentExpression(string $string): string
+    {
+        return 'unaccent(' . $string . ')';
+    }
+
     protected function getDateArithmeticIntervalExpression(
         string $date,
         string $operator,

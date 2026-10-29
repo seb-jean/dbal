@@ -117,3 +117,34 @@ all the different database vendors, for example MySQL BIGINT and
 Oracle NUMBER should be handled as integer. Doctrine DBAL offers a
 powerful way to abstract the database to php and back conversion,
 which is described in the next section.
+
+Removing accents
+----------------
+
+``getUnaccentExpression()`` removes the diacritics of the letters of a string, like
+``unaccent()`` of PostgreSQL, to compare strings regardless of their accents. Its argument is an
+SQL expression, which is referenced once:
+
+::
+
+    <?php
+    $platform = $connection->getDatabasePlatform();
+
+    $sql = sprintf(
+        'SELECT name FROM cities WHERE LOWER(%s) = LOWER(%s)',
+        $platform->getUnaccentExpression('name'),
+        $platform->getUnaccentExpression('?'),
+    );
+
+    $names = $connection->fetchFirstColumn($sql, ['malmo']); // Malmö
+
+On PostgreSQL, ``unaccent()`` requires the ``unaccent`` extension (``CREATE EXTENSION unaccent``),
+whose rules apply. On the other platforms, the letters of the Latin-1 Supplement and Latin
+Extended-A Unicode blocks, and the Romanian letters with a comma below, are replaced as
+``unaccent()`` does: their diacritics are removed, and the ligatures and a few letters are
+expanded (``Æ`` becomes ``AE``, ``ß`` becomes ``ss``...). The other characters are kept.
+
+The letters are compared by their code points, whatever the collation, and the string must use
+a Unicode character set on MySQL and MariaDB, such as ``utf8mb4``. Since the letters lose their
+diacritics, lowering the result rather than the argument also works with ``LOWER()`` of SQLite,
+which only lowers ASCII letters.

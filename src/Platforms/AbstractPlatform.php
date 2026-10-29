@@ -587,6 +587,27 @@ abstract class AbstractPlatform
     }
 
     /**
+     * Returns the SQL snippet that removes the diacritics of the letters of a string, like unaccent() of PostgreSQL.
+     *
+     * On PostgreSQL, unaccent() requires the unaccent extension, whose rules apply. On the other platforms, the letters
+     * of the Latin-1 Supplement and Latin Extended-A Unicode blocks, and the Romanian letters with a comma below, are
+     * replaced as unaccent() does: their diacritics are removed, and the ligatures and a few letters are expanded (Æ
+     * becomes AE, ß becomes ss...). The other characters are kept. The letters are compared by their code points,
+     * whatever the collation, and the string must use a Unicode character set on MySQL and MariaDB.
+     *
+     * @param string $string SQL expression producing the string.
+     */
+    public function getUnaccentExpression(string $string): string
+    {
+        foreach (UnaccentRules::getReplacements() as $letter => $replacement) {
+            $string = 'REPLACE(' . $string . ', ' . $this->quoteStringLiteral($letter) . ', '
+                . $this->quoteStringLiteral($replacement) . ')';
+        }
+
+        return $string;
+    }
+
+    /**
      * Returns the SQL to calculate the difference in days between the two passed dates.
      *
      * Computes diff = date1 - date2.

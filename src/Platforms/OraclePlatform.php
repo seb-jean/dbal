@@ -26,6 +26,7 @@ use function array_merge;
 use function count;
 use function explode;
 use function implode;
+use function mb_strlen;
 use function sprintf;
 use function str_contains;
 use function strlen;
@@ -58,6 +59,29 @@ class OraclePlatform extends AbstractPlatform
         }
 
         return sprintf('INSTR(%s, %s, %s)', $string, $substring, $start);
+    }
+
+    /**
+     * The letters replaced with one letter are replaced by TRANSLATE().
+     */
+    public function getUnaccentExpression(string $string): string
+    {
+        $letters = $translations = '';
+
+        foreach (UnaccentRules::getReplacements() as $letter => $replacement) {
+            if (mb_strlen($replacement) === 1) {
+                $letters      .= $letter;
+                $translations .= $replacement;
+
+                continue;
+            }
+
+            $string = 'REPLACE(' . $string . ', ' . $this->quoteStringLiteral($letter) . ', '
+                . $this->quoteStringLiteral($replacement) . ')';
+        }
+
+        return 'TRANSLATE(' . $string . ', ' . $this->quoteStringLiteral($letters) . ', '
+            . $this->quoteStringLiteral($translations) . ')';
     }
 
     protected function getDateArithmeticIntervalExpression(
