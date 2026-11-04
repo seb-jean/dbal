@@ -497,7 +497,7 @@ class SQLServerPlatform extends AbstractPlatform
                 $newColumn->getDefault() !== null
                 && ($requireDropDefaultConstraint || $defaultChanged)
             ) {
-                $queryParts[] = $this->getAlterTableAddDefaultConstraintClause($tableName, $newColumn);
+                $queryParts[] = $this->getAlterTableAddDefaultConstraintClause($newColumn);
             }
         }
 
@@ -521,10 +521,9 @@ class SQLServerPlatform extends AbstractPlatform
     /**
      * Returns the SQL clause for adding a default constraint in an ALTER TABLE statement.
      *
-     * @param string $tableName The name of the table to generate the clause for.
-     * @param Column $column    The column to generate the clause for.
+     * @param Column $column The column to generate the clause for.
      */
-    private function getAlterTableAddDefaultConstraintClause(string $tableName, Column $column): string
+    private function getAlterTableAddDefaultConstraintClause(Column $column): string
     {
         $columnDef         = $column->toArray(true);
         $columnDef['name'] = $column->getQuotedName($this);
@@ -1127,10 +1126,10 @@ class SQLServerPlatform extends AbstractPlatform
             'bit'              => Types::BOOLEAN,
             'blob'             => Types::BLOB,
             'char'             => Types::STRING,
-            'date'             => Types::DATE_MUTABLE,
-            'datetime'         => Types::DATETIME_MUTABLE,
-            'datetime2'        => Types::DATETIME_MUTABLE,
-            'datetimeoffset'   => Types::DATETIMETZ_MUTABLE,
+            'date'             => Types::DATE_IMMUTABLE,
+            'datetime'         => Types::DATETIME_IMMUTABLE,
+            'datetime2'        => Types::DATETIME_IMMUTABLE,
+            'datetimeoffset'   => Types::DATETIMETZ_IMMUTABLE,
             'decimal'          => Types::DECIMAL,
             'double'           => Types::FLOAT,
             'double precision' => Types::FLOAT,
@@ -1143,12 +1142,12 @@ class SQLServerPlatform extends AbstractPlatform
             'numeric'          => Types::DECIMAL,
             'nvarchar'         => Types::STRING,
             'real'             => Types::SMALLFLOAT,
-            'smalldatetime'    => Types::DATETIME_MUTABLE,
+            'smalldatetime'    => Types::DATETIME_IMMUTABLE,
             'smallint'         => Types::SMALLINT,
             'smallmoney'       => Types::INTEGER,
             'sysname'          => Types::STRING,
             'text'             => Types::TEXT,
-            'time'             => Types::TIME_MUTABLE,
+            'time'             => Types::TIME_IMMUTABLE,
             'tinyint'          => Types::SMALLINT,
             'uniqueidentifier' => Types::GUID,
             'varbinary'        => Types::BINARY,

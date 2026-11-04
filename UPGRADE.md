@@ -8,6 +8,54 @@ awareness about deprecated code.
 
 # Upgrade to 4.6
 
+## SQL-level type conversion is applied by the connection and the query builder
+
+The SQL built by `Connection::insert()`, `Connection::update()`, `Connection::delete()`,
+`QueryBuilder::createNamedParameter()` and `QueryBuilder::createPositionalParameter()` now applies
+`Type::convertToDatabaseValueSQL()` to the placeholder of every parameter bound with a DBAL mapping
+type (a type name or a `Type` instance), the same way the ORM already does. Parameters bound with a
+`ParameterType` or an `ArrayParameterType` are not affected:
+
+```php
+// with a type whose convertToDatabaseValueSQL() returns "MY_FUNCTION(?)"
+$connection->insert('products', ['price' => $money], ['price' => 'money']);
+// INSERT INTO products (price) VALUES (MY_FUNCTION(?))
+```
+
+Custom types that override `convertToDatabaseValueSQL()` get the same SQL from these methods as from
+the ORM. Hand-written SQL can apply the conversions with the new `Connection::convertToDatabaseValueSQL()`
+and `Connection::convertToPHPValueSQL()` methods; results are never converted automatically.
+
+## Added the `PlatformAwareBindingType` interface
+
+A type implementing `Doctrine\DBAL\Types\PlatformAwareBindingType` is bound with the result of its
+`getBindingTypeForPlatform()` method instead of `Type::getBindingType()`, so the binding type of its
+values can depend on the database platform.
+
+## Schema introspection maps date and time columns to immutable types
+
+Introspecting a table now maps date and time columns to the immutable DBAL types instead of their
+mutable counterparts:
+
+| Database type(s)                                      | Previous type | New type               |
+|-------------------------------------------------------|---------------|------------------------|
+| `date`, `year`                                        | `date`        | `date_immutable`       |
+| `time`, `timetz`                                      | `time`        | `time_immutable`       |
+| `datetime`, `timestamp`, `datetime2`, `smalldatetime` | `datetime`    | `datetime_immutable`   |
+| `datetimetz`, `timestamptz`, `datetimeoffset`         | `datetimetz`  | `datetimetz_immutable` |
+
+A mutable type and its immutable counterpart produce identical DDL, so schema comparison is
+unaffected: introspecting a schema and diffing it against the same schema does not yield any
+spurious changes. The change is only observable if you use the type of an introspected column to
+convert database values to PHP, e.g. in a code generator or a generic schema tool. Such code now
+receives `DateTimeImmutable` instances instead of `DateTime`.
+
+If you rely on the previous behavior, restore the mutable mapping per connection:
+
+```php
+$connection->getDatabasePlatform()->registerDoctrineTypeMapping('datetime', Types::DATETIME_MUTABLE);
+```
+
 ## Types can be scoped to a connection
 
 `Configuration::getTypeProvider()` and `Configuration::setTypeProvider()` have been added. A

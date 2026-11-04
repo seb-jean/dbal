@@ -827,10 +827,10 @@ class SQLServerPlatformTest extends AbstractPlatformTestCase
         self::assertSame(Types::FLOAT, $this->platform->getDoctrineTypeMapping('double precision'));
 
         self::assertTrue($this->platform->hasDoctrineTypeMappingFor('smalldatetime'));
-        self::assertSame(Types::DATETIME_MUTABLE, $this->platform->getDoctrineTypeMapping('smalldatetime'));
+        self::assertSame(Types::DATETIME_IMMUTABLE, $this->platform->getDoctrineTypeMapping('smalldatetime'));
 
         self::assertTrue($this->platform->hasDoctrineTypeMappingFor('datetime'));
-        self::assertSame(Types::DATETIME_MUTABLE, $this->platform->getDoctrineTypeMapping('datetime'));
+        self::assertSame(Types::DATETIME_IMMUTABLE, $this->platform->getDoctrineTypeMapping('datetime'));
 
         self::assertTrue($this->platform->hasDoctrineTypeMappingFor('char'));
         self::assertSame(Types::STRING, $this->platform->getDoctrineTypeMapping('char'));
@@ -1082,7 +1082,6 @@ class SQLServerPlatformTest extends AbstractPlatformTestCase
 
     public function testGetDefaultValueDeclarationSQLForDateType(): void
     {
-        $currentDateSql = $this->platform->getCurrentDateSQL();
         foreach ([Types::DATE_MUTABLE, Types::DATE_IMMUTABLE] as $type) {
             self::assertSame(
                 ' DEFAULT CONVERT(date, GETDATE())',
