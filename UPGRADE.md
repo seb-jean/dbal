@@ -8,6 +8,95 @@ awareness about deprecated code.
 
 # Upgrade to 4.6
 
+## SQL-level type conversion is applied by the connection and the query builder
+
+The SQL built by `Connection::insert()`, `Connection::update()`, `Connection::delete()`,
+`QueryBuilder::createNamedParameter()` and `QueryBuilder::createPositionalParameter()` now applies
+`Type::convertToDatabaseValueSQL()` to the placeholder of every parameter bound with a DBAL mapping
+type (a type name or a `Type` instance), the same way the ORM already does. Parameters bound with a
+`ParameterType` or an `ArrayParameterType` are not affected:
+
+```php
+// with a type whose convertToDatabaseValueSQL() returns "MY_FUNCTION(?)"
+$connection->insert('products', ['price' => $money], ['price' => 'money']);
+// INSERT INTO products (price) VALUES (MY_FUNCTION(?))
+```
+
+Custom types that override `convertToDatabaseValueSQL()` get the same SQL from these methods as from
+the ORM. Hand-written SQL can apply the conversions with the new `Connection::convertToDatabaseValueSQL()`
+and `Connection::convertToPHPValueSQL()` methods; results are never converted automatically.
+
+## Added the `PlatformAwareBindingType` interface
+
+A type implementing `Doctrine\DBAL\Types\PlatformAwareBindingType` is bound with the result of its
+`getBindingTypeForPlatform()` method instead of `Type::getBindingType()`, so the binding type of its
+values can depend on the database platform.
+
+## Deprecated the mutable date/time types
+
+The mutable date/time types have been deprecated in favor of their immutable counterparts:
+
+| Deprecated type   | Replacement                |
+| ----------------- | -------------------------- |
+| `DateType`        | `DateImmutableType`        |
+| `DateTimeType`    | `DateTimeImmutableType`    |
+| `DateTimeUtcType` | `DateTimeUtcImmutableType` |
+| `DateTimeTzType`  | `DateTimeTzImmutableType`  |
+| `TimeType`        | `TimeImmutableType`        |
+| `VarDateTimeType` | `VarDateTimeImmutableType` |
+
+The corresponding `Types::*_MUTABLE` constants are deprecated in favor of their `*_IMMUTABLE`
+counterparts. Using one of these types triggers a deprecation; switch the affected columns
+to the immutable type to silence it.
+
+If you want to keep working with mutable `DateTime` objects, you can register your own type that
+adapts the immutable one by converting between `DateTime` and `DateTimeImmutable`. For example, a
+replacement for the `datetime` type:
+
+```php
+final class MutableDateTimeType extends Type implements PhpDateTimeMappingType
+{
+    public function __construct(
+        private DateTimeImmutableType $inner,
+    ) {}
+
+    public function getSQLDeclaration(array $column, AbstractPlatform $platform): string
+    {
+        return $this->inner->getSQLDeclaration($column, $platform);
+    }
+
+    public function convertToDatabaseValue(mixed $value, AbstractPlatform $platform): ?string
+    {
+        if ($value instanceof DateTime) {
+            $value = DateTimeImmutable::createFromMutable($value);
+        }
+
+        return $this->inner->convertToDatabaseValue($value, $platform);
+    }
+
+    public function convertToPHPValue(mixed $value, AbstractPlatform $platform): ?DateTime
+    {
+        if ($value instanceof DateTime) {
+            return $value;
+        }
+
+        $value = $this->inner->convertToPHPValue($value, $platform);
+
+        return $value instanceof DateTimeImmutable ? DateTime::createFromImmutable($value) : $value;
+    }
+}
+```
+
+## Deprecated not passing `$isClustered` to the `UniqueConstraintColumnMetadataRow` constructor
+
+Not passing `$isClustered` to the `Doctrine\DBAL\Schema\Metadata\UniqueConstraintColumnMetadataRow` constructor is
+deprecated. Pass whether the unique constraint is clustered. The argument will become required in DBAL 5.0.
+
+## Deprecated support for MariaDB 10.6 - 10.10 and MySQL 8.0 - 8.3
+
+* Upgrade to MariaDB 10.11 or later.
+* Upgrade to MySQL 8.4 or later.
+
 ## Schema introspection maps date and time columns to immutable types
 
 Introspecting a table now maps date and time columns to the immutable DBAL types instead of their

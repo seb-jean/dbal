@@ -436,6 +436,68 @@ api needs to be used instead of using `select()`:
         ->setParameter('id1', 2)
         ->setParameter('id2', 1);
 
+Comments
+~~~~~~~~
+
+To add comments to the query, use the ``addComment()`` method which
+will add the comment above the query:
+
+.. code-block:: php
+
+    <?php
+
+    $queryBuilder
+        ->select('id', 'name')
+        ->from('users')
+        ->addComment('This is a comment');
+    // -- This is a comment
+    //
+    // SELECT id, name FROM users
+
+Multiple comments can be added by calling the method multiple times.
+They are rendered on their own line, in the order they were added:
+
+.. code-block:: php
+
+    <?php
+
+    $queryBuilder
+        ->select('id', 'name')
+        ->from('users')
+        ->addComment('Comment 1')
+        ->addComment('Comment 2');
+    // -- Comment 1
+    // -- Comment 2
+    //
+    // SELECT id, name FROM users
+
+Comments are rendered using the double-hyphen syntax, which terminates at the
+end of the line. A comment may still span multiple lines: the delimiter is
+repeated on each of them, so nothing the comment contains can end up in the
+query as SQL.
+
+.. code-block:: php
+
+    <?php
+
+    $queryBuilder
+        ->select('id', 'name')
+        ->from('users')
+        ->addComment("This comment\nspans two lines");
+    // -- This comment
+    // -- spans two lines
+    //
+    // SELECT id, name FROM users
+
+.. note::
+
+    Comments become part of the generated SQL string. They therefore take part
+    in the cache key of the result cache and in the identity a driver uses to
+    reuse a prepared statement. A comment whose text changes on every execution,
+    such as one carrying a request or trace id, makes the query look different
+    every time and defeats both caches. Keep this in mind when deciding what to
+    put into a comment.
+
 Building Expressions
 --------------------
 
