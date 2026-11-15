@@ -26,6 +26,18 @@ Custom types that override `convertToDatabaseValueSQL()` get the same SQL from t
 the ORM. Hand-written SQL can apply the conversions with the new `Connection::convertToDatabaseValueSQL()`
 and `Connection::convertToPHPValueSQL()` methods; results are never converted automatically.
 
+## The `geometry` and `geography` types are built in
+
+DBAL provides built-in `geometry` and `geography` types (`Types::GEOMETRY` and `Types::GEOGRAPHY`), to which it maps
+the spatial columns of the database platforms. Applications and libraries that register their own type named `geometry`
+or `geography` are affected as follows:
+
+- `Type::addType()` overrides the built-in type and triggers a deprecation instead of throwing. Override the built-in
+  type with `Type::overrideType()`, or register your type in the type provider of the connection, instead.
+- A library that only registers its type if `Type::hasType()` returns `false` gets the built-in type instead of its
+  own, and has to override it.
+- The types configured with DoctrineBundle already override the built-in types.
+
 ## Added the `PlatformAwareBindingType` interface
 
 A type implementing `Doctrine\DBAL\Types\PlatformAwareBindingType` is bound with the result of its
