@@ -8,6 +8,89 @@ awareness about deprecated code.
 
 # Upgrade to 4.6
 
+## Deprecated the mutable date/time types
+
+The mutable date/time types have been deprecated in favor of their immutable counterparts:
+
+| Deprecated type   | Replacement                |
+| ----------------- | -------------------------- |
+| `DateType`        | `DateImmutableType`        |
+| `DateTimeType`    | `DateTimeImmutableType`    |
+| `DateTimeUtcType` | `DateTimeUtcImmutableType` |
+| `DateTimeTzType`  | `DateTimeTzImmutableType`  |
+| `TimeType`        | `TimeImmutableType`        |
+| `VarDateTimeType` | `VarDateTimeImmutableType` |
+
+The corresponding `Types::*_MUTABLE` constants are deprecated in favor of their `*_IMMUTABLE`
+counterparts. Using one of these types triggers a deprecation; switch the affected columns
+to the immutable type to silence it.
+
+If you want to keep working with mutable `DateTime` objects, you can register your own type that
+adapts the immutable one by converting between `DateTime` and `DateTimeImmutable`. For example, a
+replacement for the `datetime` type:
+
+```php
+final class MutableDateTimeType extends Type implements PhpDateTimeMappingType
+{
+    public function __construct(
+        private DateTimeImmutableType $inner,
+    ) {}
+
+    public function getSQLDeclaration(array $column, AbstractPlatform $platform): string
+    {
+        return $this->inner->getSQLDeclaration($column, $platform);
+    }
+
+    public function convertToDatabaseValue(mixed $value, AbstractPlatform $platform): ?string
+    {
+        if ($value instanceof DateTime) {
+            $value = DateTimeImmutable::createFromMutable($value);
+        }
+
+        return $this->inner->convertToDatabaseValue($value, $platform);
+    }
+
+    public function convertToPHPValue(mixed $value, AbstractPlatform $platform): ?DateTime
+    {
+        if ($value instanceof DateTime) {
+            return $value;
+        }
+
+        $value = $this->inner->convertToPHPValue($value, $platform);
+
+        return $value instanceof DateTimeImmutable ? DateTime::createFromImmutable($value) : $value;
+    }
+}
+```
+
+## Deprecated not passing `$isClustered` to the `UniqueConstraintColumnMetadataRow` constructor
+
+Not passing `$isClustered` to the `Doctrine\DBAL\Schema\Metadata\UniqueConstraintColumnMetadataRow` constructor is
+deprecated. Pass whether the unique constraint is clustered. The argument will become required in DBAL 5.0.
+
+## Schema comparison takes the index method and indexed column options into account
+
+Indexes are now compared by their method and by the options of their columns in addition to their columns, type and
+predicate. On the platforms that support them (currently PostgreSQL), the method of an index and the options of its
+columns are now introspected as well, unless they are the defaults of the platform.
+
+If your schema declares such an index without its method or column options (e.g. because the index has been created
+by a raw SQL migration), the schema comparison will now detect a difference and generate SQL that drops the index and
+recreates it without them. To prevent that, declare them explicitly:
+
+```php
+Index::editor()
+    ->setUnquotedName('idx_name')
+    ->addUnquotedColumnName('name', options: ['option' => 'value'])
+    ->setMethod('hash')
+    ->create();
+```
+
+## Deprecated support for MariaDB 10.6 - 10.10 and MySQL 8.0 - 8.3
+
+* Upgrade to MariaDB 10.11 or later.
+* Upgrade to MySQL 8.4 or later.
+
 ## Schema introspection maps date and time columns to immutable types
 
 Introspecting a table now maps date and time columns to the immutable DBAL types instead of their
